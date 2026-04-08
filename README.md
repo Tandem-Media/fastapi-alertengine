@@ -1,186 +1,181 @@
-# fastapi-alertengine
+# ⚡ fastapi-alertengine
 
-> Production-grade request metrics middleware and SLO alert engine for FastAPI.  
-> Backed by **Redis Streams**. Zero external dependencies beyond FastAPI and redis-py.
+**Drop-in request monitoring + alerting for FastAPI — in under 60 seconds.**
 
-```
-pip install fastapi-alertengine
-```
+No Prometheus.  
+No Grafana.  
+No dashboards to configure.  
 
----
-
-## What it does
-
-| Component | Purpose |
-|---|---|
-| `RequestMetricsMiddleware` | Measures latency per request, classifies as `webhook` or `api`, writes to Redis Stream |
-| `AlertEngine` | Reads stream, computes p95/anomaly/error-rate, returns `ok` / `warning` / `critical` |
-| `AlertDeduplicator` | Redis TTL key prevents the same alert from spamming every evaluation cycle |
-| `get_alert_engine()` | Process-level singleton — one Redis connection, called from anywhere |
-| `aggregate()` | p95 breakdown by traffic type — suitable for dashboard endpoints |
+Just install → add middleware → get alerts.
 
 ---
 
-## Quick start
+## 🚀 Quick Start (30 seconds)
 
-```python
-from fastapi import FastAPI
-from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
-import redis
-
-app = FastAPI()
-rdb = redis.Redis.from_url("redis://localhost:6379", decode_responses=True)
-
-# 1. Register middleware (must be before CORSMiddleware)
-app.add_middleware(RequestMetricsMiddleware, redis=rdb)
-
-# 2. Expose an alert-status endpoint
-@app.get("/health/alerts")
-def alert_status():
-    event = get_alert_engine(redis_client=rdb).evaluate()
-    return {"status": event.status, "p95_ms": event.metrics.overall_p95_ms}
-```
-
----
-
-## Configuration
-
-All thresholds live in `AlertConfig`. Override only what you need:
-
-```python
-from fastapi_alertengine import AlertConfig, RequestMetricsMiddleware
-
-config = AlertConfig(
-    p95_warning_ms  = 500,    # default 1000
-    p95_critical_ms = 2000,   # default 3000
-    cooldown_seconds = 120,   # dedup window, default 300
-    stream_key      = "myapp:metrics",
-    stream_maxlen   = 50_000,
-)
-
-app.add_middleware(RequestMetricsMiddleware, redis=rdb, config=config)
-```
-
-| Field | Default | Description |
-|---|---|---|
-| `stream_key` | `"anchorflow:request_metrics"` | Redis Stream key |
-| `stream_maxlen` | `10_000` | Approximate cap (Redis `MAXLEN ~`) |
-| `p95_warning_ms` | `1_000` | p95 latency warning threshold (ms) |
-| `p95_critical_ms` | `3_000` | p95 latency critical threshold (ms) |
-| `anomaly_warning` | `1.0` | Anomaly ratio (vs rolling mean) warning |
-| `anomaly_critical` | `2.0` | Anomaly ratio critical |
-| `error_rate_warning` | `0.10` | Fraction of 5xx responses — warning |
-| `error_rate_critical` | `0.20` | Fraction of 5xx responses — critical |
-| `window_size` | `200` | Events read per `evaluate()` call |
-| `cooldown_seconds` | `300` | Min seconds between identical alerts |
-
----
-
-## AlertEngine
-
-```python
-from fastapi_alertengine import AlertEngine
-
-engine = AlertEngine(redis=rdb)
-event  = engine.evaluate()
-
-print(event.status)               # "ok" | "warning" | "critical"
-print(event.metrics.overall_p95_ms)
-print(event.metrics.error_rate)
-print(event.reason)               # human-readable trigger reason
-```
-
-### AlertEvent fields
-
-| Field | Type | Description |
-|---|---|---|
-| `status` | `str` | `"ok"` / `"warning"` / `"critical"` |
-| `reason` | `str \| None` | Which threshold was breached |
-| `metrics.overall_p95_ms` | `float` | p95 across all traffic |
-| `metrics.webhook_p95_ms` | `float` | p95 for webhook traffic |
-| `metrics.api_p95_ms` | `float` | p95 for API traffic |
-| `metrics.error_rate` | `float` | Fraction of 5xx responses |
-| `metrics.anomaly_score` | `float` | `|p95 - mean| / mean` |
-| `metrics.sample_size` | `int` | Events evaluated |
-| `timestamp` | `int` | Unix seconds |
-
----
-
-## AlertDeduplicator
-
-Prevents notification spam across evaluation cycles:
-
-```python
-from fastapi_alertengine import AlertEngine, AlertDeduplicator
-
-engine = AlertEngine(redis=rdb)
-dedup  = AlertDeduplicator(redis=rdb)
-
-event = engine.evaluate()
-if event.status != "ok" and dedup.should_fire(event.status):
-    send_slack_alert(event)   # fires at most once per cooldown_seconds
-```
-
----
-
-## Aggregation helper
-
-```python
-from fastapi_alertengine import aggregate, AlertConfig
-
-result = aggregate(rdb, AlertConfig(), last_n=500)
-# {
-#   "webhook_latency": {"p95_ms": 84.2, "count": 112},
-#   "api_latency":     {"p95_ms": 23.7, "count": 388},
-#   "overall_latency": {"p95_ms": 31.1, "count": 500},
-# }
-```
-
----
-
-## Running the demo
+### 1. Install
 
 ```bash
-git clone https://github.com/Tandem-Media/Tandem_Hive_V1_Final.git
-cd Tandem_Hive_V1_Final
-pip install "fastapi[standard]" redis
-redis-server &
-uvicorn examples.main:app --reload
+pip install fastapi-alertengine
+2. Plug and play
+Python
+from fastapi import FastAPI
+import redis
+from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
 
-# Hit the demo endpoints
-curl http://localhost:8000/fast
-curl http://localhost:8000/slow   # ~600ms
-curl http://localhost:8000/error  # HTTP 500
+app = FastAPI()
 
-# Check alert status
-curl http://localhost:8000/alerts
-```
+redis_client = redis.Redis.from_url("redis://localhost:6379/0")
 
----
+# Initialize the engine and add middleware
+alert_engine = get_alert_engine(redis_client=redis_client)
+app.add_middleware(RequestMetricsMiddleware, alert_engine=alert_engine)
 
-## Redis Stream schema
 
-Each event written to `anchorflow:request_metrics`:
+@app.get("/")
+async def root():
+    return {"status": "monitored"}
 
-| Field | Example |
-|---|---|
-| `path` | `/whatsapp-bot/webhook` |
-| `method` | `POST` |
-| `status` | `200` |
-| `latency_ms` | `84.312` |
-| `type` | `webhook` or `api` |
 
----
+@app.get("/health/alerts")
+def alerts_health():
+    """
+    Returns:
+      {
+        "status": "ok" | "warning" | "critical",
+        "metrics": {...},
+        "thresholds": {...},
+        "timestamp": ...
+      }
+    """
+    return alert_engine.evaluate(window_size=200)
+🧩 How It Works
+fastapi-alertengine handles the heavy lifting of observability without the usual infrastructure overhead:
 
-## Design principles
+Sensing
+Lightweight middleware captures request context (latency, status code, type).
 
-- **Non-blocking** — `_write()` is synchronous but Redis XADD is ~0.1ms; async overhead would cost more
-- **Fail-silent** — every Redis call is wrapped in try/except; metrics never break requests
-- **Approximate trimming** — `MAXLEN ~` avoids O(n) compaction on every write
-- **Single connection** — `get_alert_engine()` caches the engine; reuse your existing Redis client
+Streaming
+Metrics are piped into Redis Streams (e.g. anchorflow:request_metrics), so your API performance is never compromised by monitoring.
 
----
+Analysis
+The AlertEngine computes:
 
-## License
+P95 latency (overall and by type: api vs webhook)
+Error rate
+An anomaly score vs recent baseline
+Alerting
+It emits a simple aggregate status:
 
-MIT — see [LICENSE](LICENSE).
+JSON
+{
+  "status": "ok" | "warning" | "critical",
+  "metrics": {
+    "overall_p95_ms": 123.4,
+    "webhook_p95_ms": 234.5,
+    "api_p95_ms": 110.2,
+    "error_rate": 0.03,
+    "anomaly_score": 0.8,
+    "sample_size": 187
+  },
+  "thresholds": {
+    "p95_warning": 1000,
+    "p95_critical": 3000,
+    "anomaly_warning": 1.0,
+    "anomaly_critical": 2.0,
+    "error_rate_critical": 0.2
+  },
+  "timestamp": 1733779200
+}
+You can plug this into uptime checks, Pager/Slack alerts, or your own dashboards.
+
+🧰 Public API
+Python
+from fastapi_alertengine import AlertEngine, RequestMetricsMiddleware, get_alert_engine
+AlertEngine
+The core evaluation engine, backed by Redis Streams.
+
+Python
+from fastapi_alertengine import AlertEngine
+import redis
+
+redis_client = redis.Redis.from_url("redis://localhost:6379/0")
+alert_engine = AlertEngine(redis=redis_client)
+
+result = alert_engine.evaluate(window_size=200)
+print(result["status"])  # "ok" | "warning" | "critical"
+RequestMetricsMiddleware
+FastAPI middleware hook.
+
+Python
+from fastapi_alertengine import RequestMetricsMiddleware
+
+app.add_middleware(RequestMetricsMiddleware, alert_engine=alert_engine)
+Use this as the place to:
+
+Measure per-request latency
+Classify traffic (type="api" vs "webhook")
+Write events into the Redis stream your AlertEngine reads from
+get_alert_engine
+Helper to construct a singleton engine:
+
+Python
+from fastapi_alertengine import get_alert_engine
+import redis
+
+redis_client = redis.Redis.from_url("redis://localhost:6379/0")
+alert_engine = get_alert_engine(redis_client=redis_client)
+Call this once in startup/DI and reuse the engine across your app.
+
+📡 Redis Stream Format
+AlertEngine expects events in a Redis Stream (default: anchorflow:request_metrics) like:
+
+Python
+import time
+
+redis_client.xadd(
+    "anchorflow:request_metrics",
+    {
+        "latency_ms": 123.4,
+        "type": "api",          # or "webhook"
+        "status_code": 200,
+        "timestamp": int(time.time()),
+    },
+)
+It then:
+
+Reads the last N events (configurable window_size)
+Computes P95 latency
+Computes error rate and anomaly score
+Emits an overall status and metrics bundle
+🏦 Why “Financial-Grade”?
+Derived from the core infrastructure ideas behind AnchorFlow, this engine is aimed at environments where downtime and “flying blind” aren’t options:
+
+P95 Precision
+Don’t just track averages. Catch the tail events that frustrate your users and customers.
+
+Failure Pressure Signal
+Combines error rate and latency spikes into a single, actionable status.
+
+Audit-Friendly Shape
+Structured metrics and thresholds that can feed your own logging / compliance pipeline.
+
+AI-Agent Friendly
+A clean __all__ surface (AlertEngine, RequestMetricsMiddleware, get_alert_engine) that tools like Cursor / Claude / Copilot can understand and wire automatically.
+
+⚙️ Configuration (Roadmap)
+Current version exposes thresholds and stream keys primarily in code (AlertEngine and config classes). A typical configuration layer might include:
+
+Variable	Default	Description
+REDIS_URL	redis://localhost:6379/0	Redis connection URL
+STREAM_KEY	anchorflow:request_metrics	Redis stream for request metrics
+LATENCY_P95_WARNING	1000 (ms)	P95 warning threshold
+LATENCY_P95_CRITICAL	3000 (ms)	P95 critical threshold
+ERROR_RATE_CRITICAL	0.2	20%+ error rate is critical
+Future releases will promote these to first‑class config options via AlertConfig.
+
+✅ Requirements
+Python 3.10+
+FastAPI
+Redis reachable from your FastAPI app
+🛡️ License
+Distributed under the MIT License. See LICENSE for more information.
