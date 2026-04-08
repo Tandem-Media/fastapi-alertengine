@@ -1,5 +1,10 @@
 # ⚡ fastapi-alertengine
 
+[![PyPI version](https://img.shields.io/pypi/v/fastapi-alertengine.svg)](https://pypi.org/project/fastapi-alertengine/)
+[![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine.svg)](https://pypi.org/project/fastapi-alertengine/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/Tandem-Media?style=social)](https://github.com/sponsors/Tandem-Media)
+
 **Drop-in request monitoring + alerting for FastAPI — in under 60 seconds.**
 
 No Prometheus.  

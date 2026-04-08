@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name            = "fastapi-alertengine"
-version         = "0.1.0"
+version         = "1.1.0"
 description     = "Production-grade request metrics middleware and SLO alert engine for FastAPI + Redis Streams"
 readme          = "README.md"
 license         = { text = "MIT" }
@@ -41,8 +41,8 @@ dev     = [
 
 [project.urls]
 Homepage    = "https://anchorflow.com/tofamba"
-Repository  = "https://github.com/Tandem-Media/Tandem_Hive_V1_Final"
-"Bug Tracker" = "https://github.com/Tandem-Media/Tandem_Hive_V1_Final/issues"
+Repository  = "https://github.com/Tandem-Media/fastapi-alertengine"
+"Bug Tracker" = "https://github.com/Tandem-Media/fastapi-alertengine/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["fastapi_alertengine"]
