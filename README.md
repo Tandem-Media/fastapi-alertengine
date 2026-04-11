@@ -8,7 +8,7 @@ Just install → add middleware → get alerts.
 
 ---
 
-🔥 **Tested end-to-end (cold start): 27/27 pytest checks passing**
+🔥 **16/16 tests passing**
 🏦 **Derived from financial-grade infrastructure (AnchorFlow)**
 🤖 **AI-agent friendly (works with Claude / Copilot / Cursor)**
 
@@ -39,7 +39,7 @@ app.add_middleware(RequestMetricsMiddleware, alert_engine=alert_engine)
 
 @app.get("/health/alerts")
 def alerts_health():
-    return alert_engine.evaluate(window_size=200).as_dict()
+    return alert_engine.evaluate(window_size=200)
 ```
 
 ---
@@ -81,7 +81,7 @@ No setup. No config. No dashboards.
     }
   ],
   "timestamp": "2026-04-10T14:38:21Z",
-  "engine_version": "1.1.3"
+  "engine_version": "1.1.4"
 }
 ```
 
@@ -90,35 +90,35 @@ No setup. No config. No dashboards.
 ## 🧩 How It Works
 
 ### 1. Sensing
-Middleware captures:
-* latency (wall-clock ms)
+Middleware captures every request via `RequestMetricsMiddleware` and calls `storage.write_metric()`:
+* latency_ms (wall-clock)
 * status_code
 * request type (`api` / `webhook`)
+* timestamp
 
 ### 2. Streaming
-Events are written to Redis Streams:
+Events are written to a capped Redis Stream (single canonical schema, no alternative field names):
 ```
 anchorflow:request_metrics
 ```
 
 ### 3. Analysis
-The engine computes:
-* P95 + P50 latency (not averages)
+`engine.evaluate()` reads exclusively via `storage.read_metrics()`:
+* P95 + P50 latency
 * Error rate percentage (5xx only)
 * System health score (0–100)
-* Anomaly score vs rolling baseline
 
 ### 4. Alerting
-Returns a structured signal with status, metrics, alerts array, timestamp, and engine version.
+Returns a plain dict FastAPI can serialise natively — no `.as_dict()` call needed.
 
 ---
 
 ## ✅ Verified Reliability
 
-* ✔️ 27/27 pytest checks passing (run with `pytest tests/ -v`, no live Redis required)
-* ✔️ Works even if Redis fails (no crashes — circuit-safe write path)
+* ✔️ 16/16 tests passing (`pytest tests/ -v`, no live Redis required)
+* ✔️ Works even if Redis fails (fail-safe write path, no crashes)
 * ✔️ Safe in production request paths (zero latency overhead on hot path)
-* ✔️ Accurate P95 + P50 + error rate calculations
+* ✔️ Single source of truth for serialisation (`storage.write_metric`)
 * ✔️ ISO-8601 UTC timestamps on every response
 
 **Production readiness: 9/10**
@@ -133,7 +133,6 @@ from fastapi_alertengine import (
     RequestMetricsMiddleware,
     get_alert_engine,
     AlertConfig,
-    AlertEvent,
 )
 ```
 
@@ -141,9 +140,8 @@ from fastapi_alertengine import (
 
 ```python
 result = alert_engine.evaluate(window_size=200)
-print(result.status)          # "ok" | "warning" | "critical"
-print(result.system_health)   # 0.0 – 100.0
-print(result.as_dict())       # full JSON-safe dict
+print(result["status"])        # "ok" | "warning" | "critical"
+print(result["system_health"]) # 0.0 – 100.0
 ```
 
 ### Middleware
@@ -166,7 +164,7 @@ alert_engine = get_alert_engine(redis_client=redis_client)
 
 ## ⚙️ Configuration
 
-All settings are configurable via environment variables (prefix: `ALERTENGINE_`):
+All settings configurable via environment variables (prefix: `ALERTENGINE_`):
 
 | Env Var | Default | Description |
 | --- | --- | --- |
@@ -183,7 +181,7 @@ All settings are configurable via environment variables (prefix: `ALERTENGINE_`)
 
 ## 🤖 Built for AI-Assisted Development
 
-Clean API surface (`__all__`), minimal integration steps, predictable typed outputs.
+Clean API surface (`__all__`), minimal integration steps, predictable outputs.
 
 Works seamlessly with:
 * Claude Code
@@ -202,8 +200,6 @@ Works seamlessly with:
 ---
 
 ## 💬 Support & Contact
-
-Have questions or want help getting production-ready fast?
 
 📧 [anchorflow@outlook.com](mailto:anchorflow@outlook.com)
 
