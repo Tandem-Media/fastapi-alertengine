@@ -18,6 +18,10 @@ app = FastAPI(title="fastapi_alertengine demo", version="1.1.4")
 
 # Zero-config engine (uses ALERTENGINE_* env vars or defaults)
 engine = get_alert_engine()
+@app.on_event("startup")
+async def start_drain():
+    import asyncio
+    asyncio.create_task(engine.drain())
 
 # Register metrics middleware
 app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
