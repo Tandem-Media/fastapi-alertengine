@@ -2,24 +2,37 @@
 """
 Redis Streams read/write for request metrics.
 
-Two public functions:
-  write_metric(rdb, config, path, method, status_code, latency_ms)
-  read_metrics(rdb, config, last_n) -> list[RequestMetricEvent]
+Public API:
+    write_metric(rdb, config, path, method, status_code, latency_ms) -> None
+    read_metrics(rdb, config, last_n)  -> list[RequestMetricEvent]
+    aggregate(rdb, config, last_n)     -> dict
 
-Both fail silently on Redis errors.
+Both write_metric and read_metrics fail silently on Redis errors so
+they can never crash the host application.
 """
 
 import logging
-from typing import Any, List
+from typing import List, Optional
 
 from .config import AlertConfig
 from .schemas import RequestMetricEvent
 
 logger = logging.getLogger(__name__)
 
+# ── Canonical stream field schema ─────────────────────────────────────────
+#
+#   path        str   request.url.path
+#   method      str   HTTP verb, upper-cased
+#   status      str   HTTP status code as string  e.g. "200"
+#   latency_ms  str   wall-clock ms, 3 d.p.       e.g. "143.720"
+#   type        str   "api" | "webhook"
+#
+# All values are stored as strings because Redis Streams hash values are bytes.
+
 
 def _classify(path: str) -> str:
-    return "webhook" if "webhook" in path else "api"
+    """Tag a request as 'webhook' or 'api' based on its path."""
+    return "webhook" if "webhook" in path.lower() else "api"
 
 
 def write_metric(
@@ -30,16 +43,20 @@ def write_metric(
     status_code: int,
     latency_ms:  float,
 ) -> None:
-    """Append one request event to the Redis Stream. Never raises."""
+    """
+    Append one request event to the Redis Stream.  Never raises.
+
+    Uses MAXLEN ~ to keep the stream bounded at config.stream_maxlen entries.
+    """
     try:
         rdb.xadd(
             config.stream_key,
             {
-                "path":        path,
-                "method":      method,
-                "status":      str(status_code),
-                "latency_ms":  f"{latency_ms:.3f}",
-                "type":        _classify(path),
+                "path":       path,
+                "method":     method.upper(),
+                "status":     str(status_code),
+                "latency_ms": f"{latency_ms:.3f}",
+                "type":       _classify(path),
             },
             maxlen=config.stream_maxlen,
             approximate=True,
@@ -56,7 +73,7 @@ def read_metrics(
     """
     Read the most recent *last_n* events from the stream.
 
-    Returns an empty list on error.
+    Returns an empty list on any Redis or parse error.
     """
     try:
         raw = rdb.xrevrange(config.stream_key, count=last_n)
@@ -71,11 +88,12 @@ def read_metrics(
                 path        = fields.get("path", ""),
                 method      = fields.get("method", ""),
                 status_code = int(fields.get("status", 0)),
-                latency_ms  = float(fields.get("latency_ms", 0)),
+                latency_ms  = float(fields.get("latency_ms", 0.0)),
                 type        = fields.get("type", "api"),
             ))
         except (ValueError, TypeError):
             continue
+
     return events
 
 
@@ -85,7 +103,7 @@ def aggregate(
     last_n: int = 500,
 ) -> dict:
     """
-    Read *last_n* events and return p95 latency by traffic type.
+    Read *last_n* events and return p95 latency broken down by traffic type.
 
     Returns::
 
@@ -99,7 +117,7 @@ def aggregate(
 
     webhook_ms = [e.latency_ms for e in events if e.type == "webhook"]
     api_ms     = [e.latency_ms for e in events if e.type == "api"]
-    all_ms     = webhook_ms + api_ms
+    all_ms     = [e.latency_ms for e in events]
 
     return {
         "webhook_latency": _bucket(webhook_ms),
@@ -108,9 +126,9 @@ def aggregate(
     }
 
 
-# ── Internal ──────────────────────────────────────────────────────────────────
+# ── Internals ─────────────────────────────────────────────────────────────
 
-def _p95(values: List[float]):
+def _p95(values: List[float]) -> Optional[float]:
     if not values:
         return None
     s   = sorted(values)

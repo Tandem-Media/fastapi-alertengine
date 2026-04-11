@@ -1,62 +1,54 @@
 # test_drive.py
+"""
+Local smoke-test harness.
+
+Run with:   uvicorn test_drive:app --reload
+Then hit:   http://localhost:8000/normal
+            http://localhost:8000/chaos
+            http://localhost:8000/health/alerts
+"""
 
 import asyncio
 import random
-import time
 from typing import Optional
 
 import redis
-from fastapi import FastAPI, Response, status
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from starlette.responses import Response
+from starlette import status
 
 from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
+from fastapi_alertengine.config import AlertConfig
 
-STREAM_KEY = "anchorflow:request_metrics"
+# ── Redis + engine ────────────────────────────────────────────────────────
 
-app = FastAPI()
-
-
-def init_redis() -> Optional[redis.Redis]:
+def _try_redis() -> Optional[redis.Redis]:
     try:
-        client = redis.Redis(host="localhost", port=6379, decode_responses=True)
+        client = redis.Redis.from_url("redis://localhost:6379/0",
+                                      decode_responses=True)
         client.ping()
-        print("✅ Connected to Redis on localhost:6379")
+        print("✅  Connected to Redis on localhost:6379")
         return client
-    except Exception as e:
-        print(f"⚠️ Redis not available: {e}")
+    except Exception as exc:
+        print(f"⚠️  Redis not available: {exc}")
         return None
 
 
-r = init_redis()
-engine = get_alert_engine(redis_client=r) if r is not None else None
+_rdb    = _try_redis()
+_config = AlertConfig()
+_engine = get_alert_engine(config=_config, redis_client=_rdb) if _rdb else None
+
+# ── App ───────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="fastapi-alertengine smoke test")
+
+if _engine is not None:
+    # Drop-in: one line, all metrics captured automatically.
+    app.add_middleware(RequestMetricsMiddleware, alert_engine=_engine)
 
 
-@app.middleware("http")
-async def metrics_stream_middleware(request, call_next):
-    start = time.perf_counter()
-    response: Response = await call_next(request)
-    duration_ms = (time.perf_counter() - start) * 1000
-
-    if r is not None:
-        try:
-            kind = "chaos" if request.url.path.startswith("/chaos") else "api"
-            r.xadd(
-                STREAM_KEY,
-                {
-                    "latency_ms": duration_ms,
-                    "type": kind,
-                    "status_code": response.status_code,
-                    "timestamp": int(time.time()),
-                },
-            )
-        except Exception as e:
-            print(f"⚠️ Failed to write to Redis stream: {e}")
-
-    return response
-
-
-if engine is not None:
-    app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
-
+# ── Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/normal")
 async def normal_route():
@@ -65,7 +57,8 @@ async def normal_route():
 
 @app.get("/chaos")
 async def chaos_route():
-    if random.random() < 0.2:
+    """Injects random latency spikes and 500 errors to exercise alerting."""
+    if random.random() < 0.20:
         await asyncio.sleep(1.5)
 
     if random.random() < 0.15:
@@ -78,15 +71,12 @@ async def chaos_route():
     return {"status": "survived"}
 
 
-@app.get("/status")
-def get_status():
-    if engine is None:
-        return {
-            "status": "ok",
-            "reason": "no_redis",
-            "metrics": {},
-            "thresholds": {},
-            "timestamp": int(time.time()),
-        }
-
-    return engine.evaluate(window_size=100)
+@app.get("/health/alerts")
+def health_alerts():
+    """Live SLO status from the AlertEngine."""
+    if _engine is None:
+        return JSONResponse(
+            {"status": "ok", "reason": "no_redis", "metrics": {}},
+            status_code=200,
+        )
+    return JSONResponse(_engine.evaluate(window_size=200).as_dict())
