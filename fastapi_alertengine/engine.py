@@ -27,23 +27,17 @@ class AlertEngine:
         self.redis  = redis
         self._queue: deque = deque()
 
-    # ── Metric ingestion ───────────────────────────────────────────────────
-
     def enqueue_metric(self, metric: dict) -> None:
-        """
-        Enqueue a metric for async Redis write. Never raises.
-
-        Called by RequestMetricsMiddleware on the hot request path.
-        deque.append is thread-safe and GIL-atomic.
-        """
+        """Enqueue a metric for async Redis write. Never raises."""
         self._queue.append(metric)
 
     async def drain(self) -> None:
         """
         Background coroutine that drains the in-memory queue to Redis.
 
-        Wire at startup:
-            @app.on_event('startup')
+        Wire at startup::
+
+            @app.on_event("startup")
             async def start_drain():
                 asyncio.create_task(engine.drain())
         """
@@ -53,33 +47,11 @@ class AlertEngine:
                 try:
                     write_metric(self.redis, self.config, metric)
                 except Exception:
-                    pass  # Redis failure never crashes the drain loop
-            await asyncio.sleep(0.05)  # 50 ms drain interval
-
-    # ── Evaluation ─────────────────────────────────────────────────────────────────
+                    pass
+            await asyncio.sleep(0.05)
 
     def evaluate(self, window_size: int = 200) -> dict:
-        """
-        Read the last *window_size* events and return a health dict.
-
-        Returns a plain dict FastAPI serialises natively -- no .as_dict() needed.
-
-        Shape::
-
-            {
-              "status":         "ok" | "warning" | "critical",
-              "system_health":  82.4,
-              "metrics": {
-                "p95_latency_ms":     float,
-                "p50_latency_ms":     float,
-                "error_rate_percent": float,
-                "request_count_1m":   int
-              },
-              "alerts": [{"type": str, "message": str, "severity": str}],
-              "timestamp":      "ISO-8601 UTC",
-              "engine_version": "1.1.4"
-            }
-        """
+        """Read the last *window_size* events and return a health dict."""
         events = read_metrics(self.redis, self.config, last_n=window_size)
         ts     = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -99,86 +71,48 @@ class AlertEngine:
                 "reason": "no_data",
             }
 
-        all_lat = [e["latency_ms"] for e in events]
+        all_lat = [e.latency_ms for e in events]
         p95     = self._percentile(all_lat, 95)
         p50     = self._percentile(all_lat, 50)
 
-        error_count     = sum(1 for e in events if e["status_code"] >= 500)
-        error_rate_pct  = round(error_count / len(events) * 100, 2)
+        error_count    = sum(1 for e in events if e.status_code >= 500)
+        error_rate_pct = round(error_count / len(events) * 100, 2)
 
         cfg    = self.config
         alerts = []
         status = "ok"
 
         if p95 > cfg.p95_critical_ms:
-            alerts.append({
-                "type": "latency_spike",
-                "message": f"P95 latency ({p95:.0f}ms) exceeds threshold ({cfg.p95_critical_ms:.0f}ms)",
-                "severity": "critical",
-            })
+            alerts.append({"type": "latency_spike", "message": f"P95 latency ({p95:.0f}ms) exceeds threshold ({cfg.p95_critical_ms:.0f}ms)", "severity": "critical"})
             status = "critical"
         elif p95 > cfg.p95_warning_ms:
-            alerts.append({
-                "type": "latency_spike",
-                "message": f"P95 latency ({p95:.0f}ms) exceeds threshold ({cfg.p95_warning_ms:.0f}ms)",
-                "severity": "warning",
-            })
+            alerts.append({"type": "latency_spike", "message": f"P95 latency ({p95:.0f}ms) exceeds threshold ({cfg.p95_warning_ms:.0f}ms)", "severity": "warning"})
             status = "warning"
 
         if error_rate_pct > cfg.error_rate_critical_pct:
-            alerts.append({
-                "type": "error_anomaly",
-                "message": f"Error rate elevated: {error_rate_pct}% (Baseline: {cfg.error_rate_baseline_pct}%)",
-                "severity": "critical",
-            })
+            alerts.append({"type": "error_anomaly", "message": f"Error rate elevated: {error_rate_pct}% (Baseline: {cfg.error_rate_baseline_pct}%)", "severity": "critical"})
             status = "critical"
         elif error_rate_pct > cfg.error_rate_warning_pct:
-            alerts.append({
-                "type": "error_anomaly",
-                "message": f"Error rate elevated: {error_rate_pct}% (Baseline: {cfg.error_rate_baseline_pct}%)",
-                "severity": "warning",
-            })
-            if status != "critical":
-                status = "warning"
+            alerts.append({"type": "error_anomaly", "message": f"Error rate elevated: {error_rate_pct}% (Baseline: {cfg.error_rate_baseline_pct}%)", "severity": "warning"})
+            if status != "critical": status = "warning"
 
         system_health = self._health_score(p95, error_rate_pct, cfg)
 
         return {
-            "status": status,
-            "system_health": system_health,
-            "metrics": {
-                "p95_latency_ms": round(p95, 1),
-                "p50_latency_ms": round(p50, 1),
-                "error_rate_percent": error_rate_pct,
-                "request_count_1m": len(events),
-            },
-            "alerts": alerts,
-            "timestamp": ts,
-            "engine_version": __version__,
+            "status": status, "system_health": system_health,
+            "metrics": {"p95_latency_ms": round(p95, 1), "p50_latency_ms": round(p50, 1), "error_rate_percent": error_rate_pct, "request_count_1m": len(events)},
+            "alerts": alerts, "timestamp": ts, "engine_version": __version__,
         }
-
-    # ── Internals ────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _percentile(values: List[float], pct: int) -> float:
-        if not values:
-            return 0.0
-        s   = sorted(values)
+        if not values: return 0.0
+        s = sorted(values)
         idx = min(int(math.ceil(len(s) * pct / 100)) - 1, len(s) - 1)
         return s[max(idx, 0)]
 
     @staticmethod
     def _health_score(p95_ms: float, error_rate_pct: float, cfg: AlertConfig) -> float:
-        if p95_ms <= cfg.p95_warning_ms:
-            lat_health = 100.0
-        else:
-            worst = cfg.p95_critical_ms * 2
-            lat_health = max(0.0, 100.0 * (1 - (p95_ms - cfg.p95_warning_ms) / (worst - cfg.p95_warning_ms)))
-
-        if error_rate_pct <= cfg.error_rate_warning_pct:
-            err_health = 100.0
-        else:
-            worst = cfg.error_rate_critical_pct * 2
-            err_health = max(0.0, 100.0 * (1 - (error_rate_pct - cfg.error_rate_warning_pct) / (worst - cfg.error_rate_warning_pct)))
-
+        lat_health = 100.0 if p95_ms <= cfg.p95_warning_ms else max(0.0, 100.0 * (1 - (p95_ms - cfg.p95_warning_ms) / (cfg.p95_critical_ms * 2 - cfg.p95_warning_ms)))
+        err_health = 100.0 if error_rate_pct <= cfg.error_rate_warning_pct else max(0.0, 100.0 * (1 - (error_rate_pct - cfg.error_rate_warning_pct) / (cfg.error_rate_critical_pct * 2 - cfg.error_rate_warning_pct)))
         return round((lat_health + err_health) / 2, 1)
