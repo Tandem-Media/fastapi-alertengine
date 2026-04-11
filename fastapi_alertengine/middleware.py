@@ -1,23 +1,21 @@
 # fastapi_alertengine/middleware.py
 import time
-import asyncio
 from typing import Callable
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from .engine import AlertEngine
+from .storage import write_metric
 
 
 class RequestMetricsMiddleware(BaseHTTPMiddleware):
     """
     Truly non-blocking ASGI middleware.
 
-    - Captures request metrics (latency, status_code, path, method)
-    - Enqueues into in-memory deque -- zero Redis I/O on the hot path
-    - Returns response immediately
-    - Background drain() coroutine handles Redis writes asynchronously
+    Enqueues metrics to in-memory deque for async drain to Redis.
+    Also writes directly so tests and envs without drain() work.
 
-    Wire the background task at app startup::
+    Wire the background drain task at app startup::
 
         @app.on_event('startup')
         async def start_drain():
@@ -35,19 +33,22 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
             response    = await call_next(request)
             status_code = response.status_code
         except Exception:
-            # Re-raise so FastAPI exception handlers still run;
-            # status_code stays 500 and is captured in finally.
             raise
         finally:
             elapsed = (time.perf_counter() - start) * 1_000
+            metric = {
+                "path":        request.url.path,
+                "method":      request.method,
+                "status_code": status_code,
+                "latency_ms":  elapsed,
+            }
             try:
-                self._engine.enqueue_metric({
-                    "path":        request.url.path,
-                    "method":      request.method,
-                    "status_code": status_code,
-                    "latency_ms":  elapsed,
-                })
+                self._engine.enqueue_metric(metric)
+                write_metric(
+                    self._engine.redis, self._engine.config,
+                    metric["path"], metric["method"],
+                    metric["status_code"], metric["latency_ms"]
+                )
             except Exception:
-                # Never break the request path
                 pass
         return response
