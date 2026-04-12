@@ -29,3 +29,14 @@ class AlertConfig(BaseSettings):
 
     # Rate-limit Slack notifications: minimum seconds between messages.
     slack_rate_limit_seconds: int = 10
+
+    # Aggregation settings.
+    # Metrics are bucketed by this interval (seconds) in memory and then
+    # flushed to Redis hashes once the bucket is complete.
+    agg_bucket_seconds: int = 60
+    # TTL applied to every aggregation hash key in Redis (default: 1 hour).
+    agg_ttl_seconds: int = 3600
+    # Key prefix used for all aggregation hashes.
+    agg_key_prefix: str = "alertengine:agg"
+    # How often drain() attempts to flush completed buckets to Redis (seconds).
+    agg_flush_interval_seconds: int = 30

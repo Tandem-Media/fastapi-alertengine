@@ -888,3 +888,496 @@ class TestHistory:
         engine = _make_engine()
         engine.history(last_n=50)
         engine.redis.xrevrange.assert_called_with(engine.config.stream_key, count=50)
+
+
+# ── Aggregation (config) ──────────────────────────────────────────────────────
+
+
+class TestAggregationConfig:
+    def test_agg_defaults(self):
+        config = AlertConfig()
+        assert config.agg_bucket_seconds == 60
+        assert config.agg_ttl_seconds == 3600
+        assert config.agg_key_prefix == "alertengine:agg"
+        assert config.agg_flush_interval_seconds == 30
+
+    def test_agg_fields_configurable(self):
+        config = AlertConfig(agg_bucket_seconds=30, agg_ttl_seconds=600, agg_flush_interval_seconds=10)
+        assert config.agg_bucket_seconds == 30
+        assert config.agg_ttl_seconds == 600
+        assert config.agg_flush_interval_seconds == 10
+
+
+# ── _aggregate_batch ──────────────────────────────────────────────────────────
+
+
+class TestAggregateBatch:
+    def test_adds_entry_to_agg_buffer(self):
+        engine = _make_engine()
+        engine._aggregate_batch([{"path": "/api/x", "method": "GET", "status_code": 200, "latency_ms": 50.0}])
+        assert len(engine._agg) == 1
+
+    def test_groups_2xx_status_codes(self):
+        engine = _make_engine()
+        engine._aggregate_batch([
+            {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 10.0},
+            {"path": "/x", "method": "GET", "status_code": 201, "latency_ms": 20.0},
+        ])
+        # Both 200 and 201 land in the same "2xx" key
+        assert len(engine._agg) == 1
+        row = next(iter(engine._agg.values()))
+        assert row[0] == 2  # count
+
+    def test_groups_4xx_separately(self):
+        engine = _make_engine()
+        engine._aggregate_batch([
+            {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 5.0},
+            {"path": "/x", "method": "GET", "status_code": 404, "latency_ms": 3.0},
+        ])
+        assert len(engine._agg) == 2
+
+    def test_accumulates_count_and_total(self):
+        engine = _make_engine()
+        metric = {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 10.0}
+        engine._aggregate_batch([metric])
+        engine._aggregate_batch([metric])
+        row = next(iter(engine._agg.values()))
+        assert row[0] == 2          # count
+        assert abs(row[1] - 20.0) < 1e-6  # total_latency
+
+    def test_tracks_max_latency(self):
+        engine = _make_engine()
+        engine._aggregate_batch([
+            {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 10.0},
+            {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 99.0},
+            {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 5.0},
+        ])
+        row = next(iter(engine._agg.values()))
+        assert row[2] == 99.0   # max_latency
+
+    def test_uses_config_service_name_when_metric_has_none(self):
+        engine = _make_engine(service_name="svc-test")
+        engine._aggregate_batch([{"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0}])
+        key = next(iter(engine._agg.keys()))
+        assert key[0] == "svc-test"
+
+    def test_uses_metric_service_name_when_present(self):
+        engine = _make_engine(service_name="default")
+        engine._aggregate_batch([{
+            "path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0,
+            "service_name": "override-svc",
+        }])
+        key = next(iter(engine._agg.keys()))
+        assert key[0] == "override-svc"
+
+
+# ── _flush_aggregates ─────────────────────────────────────────────────────────
+
+
+class TestFlushAggregates:
+    def test_past_bucket_is_flushed_and_removed(self):
+        engine = _make_engine()
+        bucket_size = engine.config.agg_bucket_seconds
+        # Use a timestamp from the previous bucket
+        past_bucket = (int(time.time()) // bucket_size - 1) * bucket_size
+        key = ("svc", past_bucket, "/x", "GET", "2xx")
+        engine._agg[key] = [5, 100.0, 25.0]
+
+        engine._flush_aggregates()
+
+        # Buffer should be empty after flush
+        assert key not in engine._agg
+        # Pipeline should have been called
+        engine.redis.pipeline.assert_called()
+
+    def test_current_bucket_stays_in_buffer(self):
+        engine = _make_engine()
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        key = ("svc", now_bucket, "/x", "GET", "2xx")
+        engine._agg[key] = [1, 10.0, 10.0]
+
+        engine._flush_aggregates()
+
+        # Current bucket must NOT be flushed
+        assert key in engine._agg
+        engine.redis.pipeline.assert_not_called()
+
+    def test_empty_buffer_is_noop(self):
+        engine = _make_engine()
+        engine._flush_aggregates()
+        engine.redis.pipeline.assert_not_called()
+
+    def test_flush_aggregates_storage_survives_redis_error(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        rdb.pipeline.return_value.execute.side_effect = RuntimeError("Redis down")
+        # Must not raise
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+
+
+# ── flush_aggregates (storage) ────────────────────────────────────────────────
+
+
+class TestFlushAggregatesStorage:
+    def test_uses_pipeline(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        snapshot = {("svc", 1000, "/api", "GET", "2xx"): [3, 60.0, 30.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        rdb.pipeline.assert_called_once_with(transaction=False)
+        pipe = rdb.pipeline.return_value
+        pipe.hset.assert_called_once()
+        pipe.expire.assert_called_once()
+        pipe.execute.assert_called_once()
+
+    def test_empty_snapshot_is_noop(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        flush_aggregates(rdb, AlertConfig(), {})
+        rdb.pipeline.assert_not_called()
+
+    def test_key_format(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_key_prefix="myapp:agg")
+        snapshot = {("my-svc", 1234567200, "/api/data", "POST", "2xx"): [1, 50.0, 50.0]}
+        flush_aggregates(rdb, config, snapshot)
+        pipe = rdb.pipeline.return_value
+        call_args = pipe.hset.call_args[0]
+        assert call_args[0] == "myapp:agg:my-svc:1234567200"
+        assert call_args[1] == "/api/data|POST|2xx"
+        # value format: count|total|max
+        assert call_args[2].startswith("1|50.000|50.000")
+
+    def test_ttl_applied(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_ttl_seconds=7200)
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
+        flush_aggregates(rdb, config, snapshot)
+        pipe = rdb.pipeline.return_value
+        expire_call = pipe.expire.call_args[0]
+        assert expire_call[1] == 7200
+
+    def test_survives_pipeline_error(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        rdb.pipeline.return_value.execute.side_effect = RuntimeError("boom")
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
+        # Must not raise
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+
+
+# ── read_aggregates (storage) ─────────────────────────────────────────────────
+
+
+class TestReadAggregates:
+    def test_returns_empty_on_no_data(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        rdb.scan.return_value = (0, [])
+        result = read_aggregates(rdb, AlertConfig(), "my-svc")
+        assert result == []
+
+    def test_parses_stored_data(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_key_prefix="alertengine:agg")
+        key = "alertengine:agg:my-svc:1712345220"
+        rdb.scan.return_value = (0, [key])
+        rdb.hgetall.return_value = {"/api|GET|2xx": "10|500.000|80.000"}
+
+        result = read_aggregates(rdb, config, "my-svc", last_n_buckets=5)
+        assert len(result) == 1
+        row = result[0]
+        assert row["service"] == "my-svc"
+        assert row["path"] == "/api"
+        assert row["method"] == "GET"
+        assert row["status_group"] == "2xx"
+        assert row["count"] == 10
+        assert abs(row["avg_latency_ms"] - 50.0) < 0.01
+        assert row["max_latency_ms"] == 80.0
+        assert row["bucket_ts"] == 1712345220
+
+    def test_filters_strictly_by_service(self):
+        """SCAN uses the service pattern — only matching keys are scanned."""
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        rdb.scan.return_value = (0, [])  # scanner returns nothing for wrong service
+
+        result = read_aggregates(rdb, AlertConfig(), "other-svc", last_n_buckets=5)
+
+        # The SCAN pattern passed should contain the service name
+        scan_call = rdb.scan.call_args
+        assert "other-svc" in scan_call[1].get("match", "")
+
+    def test_survives_redis_error(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        rdb.scan.side_effect = RuntimeError("Redis down")
+        # Must not raise
+        result = read_aggregates(rdb, AlertConfig(), "svc")
+        assert result == []
+
+
+# ── aggregated_history (engine) ───────────────────────────────────────────────
+
+
+class TestAggregatedHistory:
+    def test_returns_list(self):
+        engine = _make_engine()
+        engine.redis.scan.return_value = (0, [])
+        result = engine.aggregated_history()
+        assert isinstance(result, list)
+
+    def test_uses_config_service_name_by_default(self):
+        engine = _make_engine(service_name="my-svc")
+        engine.redis.scan.return_value = (0, [])
+        engine.aggregated_history()
+        scan_call = engine.redis.scan.call_args
+        assert "my-svc" in scan_call[1].get("match", "")
+
+    def test_accepts_explicit_service(self):
+        engine = _make_engine(service_name="default")
+        engine.redis.scan.return_value = (0, [])
+        engine.aggregated_history(service="explicit-svc")
+        scan_call = engine.redis.scan.call_args
+        assert "explicit-svc" in scan_call[1].get("match", "")
+
+
+# ── Ingestion stats ───────────────────────────────────────────────────────────
+
+
+class TestIngestionStats:
+    def test_enqueue_increments_enqueued(self):
+        engine = _make_engine()
+        for _ in range(3):
+            engine.enqueue_metric({"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+        assert engine.get_ingestion_stats()["enqueued"] == 3
+
+    def test_overflow_increments_dropped(self):
+        engine = _make_engine()
+        # Fill the queue completely
+        for i in range(MAX_QUEUE_SIZE):
+            engine.enqueue_metric({"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+        # One more should be dropped
+        engine.enqueue_metric({"path": "/overflow", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+        stats = engine.get_ingestion_stats()
+        assert stats["dropped"] >= 1
+
+    def test_get_ingestion_stats_returns_dict(self):
+        engine = _make_engine()
+        stats = engine.get_ingestion_stats()
+        assert isinstance(stats, dict)
+        assert "enqueued" in stats
+        assert "dropped" in stats
+        assert "last_drain_at" in stats
+
+    def test_last_drain_at_is_none_before_drain(self):
+        engine = _make_engine()
+        assert engine.get_ingestion_stats()["last_drain_at"] is None
+
+    def test_drain_updates_last_drain_at(self):
+        engine = _make_engine()
+        engine.enqueue_metric({"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+
+        async def _run():
+            task = asyncio.create_task(engine.drain())
+            for _ in range(10):
+                await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(_run())
+        assert engine.get_ingestion_stats()["last_drain_at"] is not None
+
+    def test_get_ingestion_stats_returns_copy(self):
+        engine = _make_engine()
+        stats = engine.get_ingestion_stats()
+        stats["enqueued"] = 9999  # mutate the returned copy
+        # Should not affect internal state
+        assert engine._stats["enqueued"] == 0
+
+
+# ── Alert queue ───────────────────────────────────────────────────────────────
+
+
+class TestAlertQueue:
+    def test_enqueue_alert_returns_true(self):
+        engine = _make_engine()
+        result = engine.enqueue_alert({"status": "ok"})
+        assert result is True
+
+    def test_enqueue_alert_queues_item(self):
+        engine = _make_engine()
+        engine.enqueue_alert({"status": "warning"})
+        assert engine._alert_queue.qsize() == 1
+
+    def test_enqueue_alert_returns_false_when_full(self):
+        engine = _make_engine()
+        # Fill the alert queue (maxsize=1000)
+        for _ in range(1000):
+            engine._alert_queue.put_nowait({"status": "ok"})
+        result = engine.enqueue_alert({"status": "critical"})
+        assert result is False
+
+    def test_alert_delivery_loop_calls_deliver_alert(self):
+        engine = _make_engine()
+        engine.enqueue_alert({"status": "critical", "metrics": {}})
+
+        delivered = {"count": 0}
+
+        async def mock_deliver(evaluation):
+            delivered["count"] += 1
+            return True
+
+        async def _run():
+            with patch.object(engine, "deliver_alert", side_effect=mock_deliver):
+                task = asyncio.create_task(engine.alert_delivery_loop())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(_run())
+        assert delivered["count"] == 1
+
+    def test_alert_delivery_loop_stops_on_cancel(self):
+        engine = _make_engine()
+
+        async def _run():
+            task = asyncio.create_task(engine.alert_delivery_loop())
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # Should not raise
+        asyncio.run(_run())
+
+    def test_alert_delivery_loop_recovers_from_exception(self):
+        engine = _make_engine()
+        engine.enqueue_alert({"status": "ok"})
+
+        call_count = {"n": 0}
+
+        async def flaky_deliver(evaluation):
+            call_count["n"] += 1
+            raise RuntimeError("boom")
+
+        async def _run():
+            with patch.object(engine, "deliver_alert", side_effect=flaky_deliver):
+                task = asyncio.create_task(engine.alert_delivery_loop())
+                await asyncio.sleep(1.2)  # wait past 1s recovery sleep
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+        asyncio.run(_run())
+        # Loop should have attempted delivery and recovered
+        assert call_count["n"] >= 1
+
+
+# ── New endpoints ─────────────────────────────────────────────────────────────
+
+
+class TestNewEndpoints:
+    def _make_instrumented_app(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            rdb = _make_redis()
+            rdb.scan.return_value = (0, [])
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+        return app, engine
+
+    def test_metrics_ingestion_endpoint_registered(self):
+        app, _ = self._make_instrumented_app()
+        with TestClient(app) as client:
+            resp = client.get("/metrics/ingestion")
+        assert resp.status_code == 200
+
+    def test_metrics_ingestion_returns_expected_keys(self):
+        app, _ = self._make_instrumented_app()
+        with TestClient(app) as client:
+            data = client.get("/metrics/ingestion").json()
+        assert "enqueued" in data
+        assert "dropped" in data
+        assert "last_drain_at" in data
+
+    def test_metrics_ingestion_enqueued_increments_on_requests(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            rdb = _make_redis()
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+
+        @app.get("/ping")
+        def ping():
+            return {}
+
+        with TestClient(app) as client:
+            for _ in range(3):
+                client.get("/ping")
+            data = client.get("/metrics/ingestion").json()
+
+        assert data["enqueued"] >= 3
+
+    def test_metrics_history_uses_aggregated_data(self):
+        app, engine = self._make_instrumented_app()
+        with TestClient(app) as client:
+            resp = client.get("/metrics/history")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "metrics" in data
+        assert isinstance(data["metrics"], list)
+
+    def test_metrics_history_accepts_service_param(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            rdb = _make_redis()
+            rdb.scan.return_value = (0, [])
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            instrument(app)
+
+        with TestClient(app) as client:
+            resp = client.get("/metrics/history?service=my-svc&last_n_buckets=5")
+        assert resp.status_code == 200
+
+    def test_alerts_evaluate_is_non_blocking(self):
+        """POST /alerts/evaluate must not await Slack delivery directly."""
+        app, engine = self._make_instrumented_app()
+        with TestClient(app) as client:
+            # Should complete immediately regardless of Slack config
+            resp = client.post("/alerts/evaluate")
+        assert resp.status_code == 200
+        # Alert was enqueued (not directly sent), so alert_queue may have item
+        # (or was already consumed; just verify no error)
+
+    def test_alerts_evaluate_enqueues_to_alert_queue(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            rdb = _make_redis()
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+
+        # Wrap enqueue_alert to track calls — the delivery loop may consume the
+        # alert before the qsize assertion runs, so we check invocations instead.
+        calls: list = []
+        original = engine.enqueue_alert
+        engine.enqueue_alert = lambda ev: calls.append(ev) or original(ev)
+
+        with TestClient(app) as client:
+            client.post("/alerts/evaluate")
+
+        assert len(calls) == 1  # endpoint must have called enqueue_alert exactly once

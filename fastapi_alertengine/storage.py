@@ -1,12 +1,14 @@
 # fastapi_alertengine/storage.py
 """
-Redis Streams read/write for request metrics.
+Redis Streams read/write for request metrics, plus aggregation helpers.
 
 Public functions:
-  write_metric(rdb, config, metric)       -- write one metric dict
-  write_batch(rdb, config, metrics)       -- write many metrics via pipeline
-  read_metrics(rdb, config, last_n)       -> list[RequestMetricEvent]
-  aggregate(rdb, config, last_n)          -> dict
+  write_metric(rdb, config, metric)              -- write one metric dict
+  write_batch(rdb, config, metrics)              -- write many metrics via pipeline
+  flush_aggregates(rdb, config, snapshot)        -- persist minute-bucket aggregates
+  read_aggregates(rdb, config, service, ...)     -> list[dict]
+  read_metrics(rdb, config, last_n)              -> list[RequestMetricEvent]
+  aggregate(rdb, config, last_n)                 -> dict
 
 All Redis operations fail silently.
 """
@@ -83,6 +85,101 @@ def write_batch(
         pipe.execute()
     except Exception as exc:
         logger.warning("fastapi_alertengine.write_batch failed: %s", exc)
+
+
+def flush_aggregates(rdb, config: AlertConfig, snapshot: dict) -> None:
+    """
+    Write completed-bucket aggregates to Redis hashes via pipeline.
+
+    snapshot keys: (service, bucket_ts, path, method, status_group)
+    snapshot values: [count, total_latency, max_latency]
+
+    Redis layout:
+      Key:   {agg_key_prefix}:{service}:{bucket_ts}
+      Field: {path}|{method}|{status_group}
+      Value: {count}|{total_latency:.3f}|{max_latency:.3f}
+
+    Each key gets an EXPIRE of config.agg_ttl_seconds.
+    Never raises.
+    """
+    if not snapshot:
+        return
+    try:
+        pipe = rdb.pipeline(transaction=False)
+        keys_seen: set = set()
+        for (service, bucket_ts, path, method, status_group), (count, total, max_lat) in snapshot.items():
+            redis_key = f"{config.agg_key_prefix}:{service}:{bucket_ts}"
+            field = f"{path}|{method}|{status_group}"
+            value = f"{count}|{total:.3f}|{max_lat:.3f}"
+            pipe.hset(redis_key, field, value)
+            keys_seen.add(redis_key)
+        for key in keys_seen:
+            pipe.expire(key, config.agg_ttl_seconds)
+        pipe.execute()
+    except Exception as exc:
+        logger.warning("fastapi_alertengine.flush_aggregates failed: %s", exc)
+
+
+def read_aggregates(
+    rdb,
+    config: AlertConfig,
+    service: str,
+    last_n_buckets: int = 10,
+) -> List[dict]:
+    """
+    Read aggregated metrics for *service* from Redis.
+
+    Scans for keys matching ``{agg_key_prefix}:{service}:*``, takes the most
+    recent *last_n_buckets* bucket keys, and returns a list of dicts with:
+      bucket_ts, service, path, method, status_group,
+      count, avg_latency_ms, max_latency_ms
+
+    Returns [] on error or when no data exists.
+    """
+    pattern = f"{config.agg_key_prefix}:{service}:*"
+    results: List[dict] = []
+    try:
+        keys: List[str] = []
+        cursor = 0
+        while True:
+            cursor, batch = rdb.scan(cursor, match=pattern, count=100)
+            keys.extend(batch)
+            if cursor == 0:
+                break
+
+        # Sort lexicographically (keys end with :bucket_ts so sort == time sort)
+        keys.sort()
+        keys = keys[-last_n_buckets:]
+
+        for key in keys:
+            try:
+                bucket_ts = int(key.rsplit(":", 1)[-1])
+            except (ValueError, IndexError):
+                bucket_ts = 0
+
+            data = rdb.hgetall(key)
+            for field, value in data.items():
+                try:
+                    path, method, status_group = field.split("|", 2)
+                    count_s, total_s, max_s = value.split("|", 2)
+                    count   = int(count_s)
+                    total   = float(total_s)
+                    max_lat = float(max_s)
+                    results.append({
+                        "bucket_ts":      bucket_ts,
+                        "service":        service,
+                        "path":           path,
+                        "method":         method,
+                        "status_group":   status_group,
+                        "count":          count,
+                        "avg_latency_ms": round(total / count, 3) if count else 0.0,
+                        "max_latency_ms": round(max_lat, 3),
+                    })
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("fastapi_alertengine.read_aggregates failed: %s", exc)
+    return results
 
 
 def read_metrics(

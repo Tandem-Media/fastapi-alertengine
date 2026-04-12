@@ -22,7 +22,7 @@ __all__ = [
     "instrument",
 ]
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 
 def instrument(
@@ -34,9 +34,10 @@ def instrument(
     """
     Instrument a FastAPI app with alertengine in one line.
 
-    Wires the request metrics middleware, a background drain task, and three
-    observability endpoints automatically.  Redis URL resolution order:
+    Wires the request metrics middleware, background drain + alert delivery
+    tasks, and four observability endpoints automatically.
 
+    Redis URL resolution order:
     1. The *redis_url* argument.
     2. The ``ALERTENGINE_REDIS_URL`` environment variable.
     3. ``redis://localhost:6379/0`` (built-in default).
@@ -44,29 +45,9 @@ def instrument(
     Auto-registered endpoints
     -------------------------
     GET  *health_path*         — evaluate() result (default ``/health/alerts``)
-    POST /alerts/evaluate      — evaluate() + optional Slack delivery
-    GET  /metrics/history      — recent raw metrics from Redis Stream
-
-    Usage::
-
-        from fastapi import FastAPI
-        from fastapi_alertengine import instrument
-
-        app = FastAPI()
-        instrument(app)
-
-    Parameters
-    ----------
-    app:
-        The FastAPI application to instrument.
-    redis_url:
-        Optional Redis URL.  Overrides the environment variable and default.
-    config:
-        A pre-built :class:`AlertConfig`.  When provided, *redis_url* is
-        ignored (embed the URL in the config instead).
-    health_path:
-        Path for the auto-registered health/evaluation endpoint.
-        Defaults to ``"/health/alerts"``.
+    POST /alerts/evaluate      — evaluate() + enqueue for Slack delivery
+    GET  /metrics/history      — aggregated metrics (filter by service)
+    GET  /metrics/ingestion    — ingestion counters (enqueued / dropped)
 
     Returns
     -------
@@ -81,10 +62,11 @@ def instrument(
 
     app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
 
-    async def _start_drain() -> None:
+    async def _start_background_tasks() -> None:
         asyncio.create_task(engine.drain())
+        asyncio.create_task(engine.alert_delivery_loop())
 
-    app.router.on_startup.append(_start_drain)
+    app.router.on_startup.append(_start_background_tasks)
 
     # ── GET /health/alerts ────────────────────────────────────────────────────
     @app.get(health_path, include_in_schema=False)
@@ -93,16 +75,23 @@ def instrument(
 
     # ── POST /alerts/evaluate ─────────────────────────────────────────────────
     @app.post("/alerts/evaluate", include_in_schema=False)
-    async def _alerts_evaluate():
-        """Evaluate + deliver to Slack if configured and not rate-limited."""
+    def _alerts_evaluate():
+        """Evaluate and enqueue alert for background Slack delivery."""
         result = engine.evaluate()
-        await engine.deliver_alert(result)
+        engine.enqueue_alert(result)  # non-blocking; processed by alert_delivery_loop
         return result
 
     # ── GET /metrics/history ──────────────────────────────────────────────────
     @app.get("/metrics/history", include_in_schema=False)
-    def _metrics_history(last_n: int = 100):
-        return {"metrics": engine.history(last_n=last_n)}
+    def _metrics_history(service: Optional[str] = None, last_n_buckets: int = 10):
+        """Aggregated per-minute metrics filtered by service."""
+        return {"metrics": engine.aggregated_history(service=service, last_n_buckets=last_n_buckets)}
+
+    # ── GET /metrics/ingestion ────────────────────────────────────────────────
+    @app.get("/metrics/ingestion", include_in_schema=False)
+    def _metrics_ingestion():
+        """Ingestion counters: enqueued, dropped, last_drain_at."""
+        return engine.get_ingestion_stats()
 
     return engine
 
