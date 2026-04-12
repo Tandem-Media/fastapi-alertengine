@@ -310,7 +310,7 @@ def metrics_ingestion():
 
 ---
 
-## �� Redis Stream Format
+## 📡 Redis Stream Format
 
 Metrics are written with these fields:
 
@@ -321,6 +321,8 @@ Metrics are written with these fields:
 | `status` | string | HTTP status code |
 | `latency_ms` | string | Response time in ms (3 decimal places) |
 | `type` | string | `"api"` or `"webhook"` |
+
+---
 
 ---
 
