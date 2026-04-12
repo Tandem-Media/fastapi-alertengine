@@ -66,7 +66,11 @@ def instrument(
         asyncio.create_task(engine.drain())
         asyncio.create_task(engine.alert_delivery_loop())
 
+    async def _shutdown() -> None:
+        await engine.flush_all_aggregates()
+
     app.router.on_startup.append(_start_background_tasks)
+    app.router.on_shutdown.append(_shutdown)
 
     # ── GET /health/alerts ────────────────────────────────────────────────────
     @app.get(health_path, include_in_schema=False)

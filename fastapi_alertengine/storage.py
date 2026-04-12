@@ -13,6 +13,7 @@ Public functions:
 All Redis operations fail silently.
 """
 
+import json
 import logging
 from typing import List
 
@@ -95,9 +96,13 @@ def flush_aggregates(rdb, config: AlertConfig, snapshot: dict) -> None:
     snapshot values: [count, total_latency, max_latency]
 
     Redis layout:
-      Key:   {agg_key_prefix}:{service}:{bucket_ts}
-      Field: {path}|{method}|{status_group}
-      Value: {count}|{total_latency:.3f}|{max_latency:.3f}
+      Hash key:  {agg_key_prefix}:{service}:{bucket_ts}
+      Field:     {path}|{method}|{status_group}
+      Value:     JSON: {"c": count, "t": total, "m": max_latency}
+
+      ZSET index key: {agg_key_prefix}:index:{service}
+      Score: bucket_ts (unix timestamp)
+      Member: str(bucket_ts)
 
     Each key gets an EXPIRE of config.agg_ttl_seconds.
     Never raises.
@@ -106,15 +111,29 @@ def flush_aggregates(rdb, config: AlertConfig, snapshot: dict) -> None:
         return
     try:
         pipe = rdb.pipeline(transaction=False)
-        keys_seen: set = set()
+        seen: set = set()  # (service, bucket_ts) pairs — for expire + ZADD
+
         for (service, bucket_ts, path, method, status_group), (count, total, max_lat) in snapshot.items():
             redis_key = f"{config.agg_key_prefix}:{service}:{bucket_ts}"
             field = f"{path}|{method}|{status_group}"
-            value = f"{count}|{total:.3f}|{max_lat:.3f}"
+            value = json.dumps({"c": count, "t": round(total, 3), "m": round(max_lat, 3)})
             pipe.hset(redis_key, field, value)
-            keys_seen.add(redis_key)
-        for key in keys_seen:
-            pipe.expire(key, config.agg_ttl_seconds)
+            seen.add((service, bucket_ts))
+
+        # Group bucket_ts values by service for ZADD, then apply EXPIRE to all keys.
+        by_service: dict = {}
+        for (service, bucket_ts) in seen:
+            redis_key = f"{config.agg_key_prefix}:{service}:{bucket_ts}"
+            pipe.expire(redis_key, config.agg_ttl_seconds)
+            if service not in by_service:
+                by_service[service] = {}
+            by_service[service][str(bucket_ts)] = bucket_ts  # member → score
+
+        for service, mapping in by_service.items():
+            index_key = f"{config.agg_key_prefix}:index:{service}"
+            pipe.zadd(index_key, mapping)  # idempotent: same member updates same score
+            pipe.expire(index_key, config.agg_ttl_seconds)
+
         pipe.execute()
     except Exception as exc:
         logger.warning("fastapi_alertengine.flush_aggregates failed: %s", exc)
@@ -129,42 +148,51 @@ def read_aggregates(
     """
     Read aggregated metrics for *service* from Redis.
 
-    Scans for keys matching ``{agg_key_prefix}:{service}:*``, takes the most
-    recent *last_n_buckets* bucket keys, and returns a list of dicts with:
+    Uses the ZSET index ``{agg_key_prefix}:index:{service}`` to retrieve the
+    most recent *last_n_buckets* bucket timestamps in descending order, then
+    fetches each bucket hash via a single pipeline.
+
+    Returns a list of dicts with:
       bucket_ts, service, path, method, status_group,
       count, avg_latency_ms, max_latency_ms
 
+    Values may be JSON (current format) or pipe-delimited (legacy fallback).
     Returns [] on error or when no data exists.
     """
-    pattern = f"{config.agg_key_prefix}:{service}:*"
+    index_key = f"{config.agg_key_prefix}:index:{service}"
     results: List[dict] = []
     try:
-        keys: List[str] = []
-        cursor = 0
-        while True:
-            cursor, batch = rdb.scan(cursor, match=pattern, count=100)
-            keys.extend(batch)
-            if cursor == 0:
-                break
+        members = rdb.zrevrange(index_key, 0, last_n_buckets - 1)
+        if not members:
+            return []
 
-        # Sort lexicographically (keys end with :bucket_ts so sort == time sort)
-        keys.sort()
-        keys = keys[-last_n_buckets:]
+        # Fetch all bucket hashes in one pipeline.
+        pipe = rdb.pipeline(transaction=False)
+        for bucket_ts_str in members:
+            redis_key = f"{config.agg_key_prefix}:{service}:{bucket_ts_str}"
+            pipe.hgetall(redis_key)
+        hash_results = pipe.execute()
 
-        for key in keys:
+        for bucket_ts_str, data in zip(members, hash_results):
             try:
-                bucket_ts = int(key.rsplit(":", 1)[-1])
-            except (ValueError, IndexError):
+                bucket_ts = int(bucket_ts_str)
+            except (ValueError, TypeError):
                 bucket_ts = 0
 
-            data = rdb.hgetall(key)
-            for field, value in data.items():
+            for field, value in (data or {}).items():
                 try:
                     path, method, status_group = field.split("|", 2)
-                    count_s, total_s, max_s = value.split("|", 2)
-                    count   = int(count_s)
-                    total   = float(total_s)
-                    max_lat = float(max_s)
+                    # Try JSON first; fall back to legacy pipe-delimited format.
+                    try:
+                        v       = json.loads(value)
+                        count   = int(v["c"])
+                        total   = float(v["t"])
+                        max_lat = float(v["m"])
+                    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                        count_s, total_s, max_s = value.split("|", 2)
+                        count   = int(count_s)
+                        total   = float(total_s)
+                        max_lat = float(max_s)
                     results.append({
                         "bucket_ts":      bucket_ts,
                         "service":        service,

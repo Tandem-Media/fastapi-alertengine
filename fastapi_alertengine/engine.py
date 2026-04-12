@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 MAX_QUEUE_SIZE    = 10_000
 _DRAIN_BATCH_SIZE = 100
 _DRAIN_SLEEP_S    = 0.05
+# Maximum number of distinct aggregation keys held in memory at once.
+# New keys are dropped (and counted) when this limit is reached.
+MAX_AGG_KEYS      = 50_000
 
 
 class AlertEngine:
@@ -44,6 +47,8 @@ class AlertEngine:
             "dropped":       0,
             "last_drain_at": None,
         }
+        self._dropped_agg_keys: int = 0   # new keys dropped due to memory guard
+        self._dropped_alerts:   int = 0   # alerts dropped due to full alert queue
         # Alert delivery queue — consumed by alert_delivery_loop().
         self._alert_queue: asyncio.Queue = asyncio.Queue(maxsize=1_000)
         # Timestamp of last successful Slack notification.
@@ -106,7 +111,11 @@ class AlertEngine:
     # ── Aggregation ───────────────────────────────────────────────────────────
 
     def _aggregate_batch(self, batch: List[dict]) -> None:
-        """Accumulate a batch of metrics into the in-memory aggregation buffer."""
+        """Accumulate a batch of metrics into the in-memory aggregation buffer.
+
+        New aggregation keys are silently dropped (and counted) when the buffer
+        exceeds MAX_AGG_KEYS to prevent unbounded memory growth.
+        """
         bucket_size = self.config.agg_bucket_seconds
         now_bucket  = int(time.time()) // bucket_size * bucket_size
 
@@ -120,6 +129,9 @@ class AlertEngine:
 
             key = (service, now_bucket, path, method, status_group)
             if key not in self._agg:
+                if len(self._agg) >= MAX_AGG_KEYS:
+                    self._dropped_agg_keys += 1
+                    continue
                 self._agg[key] = [0, 0.0, 0.0]  # count, total, max
             row = self._agg[key]
             row[0] += 1
@@ -147,6 +159,19 @@ class AlertEngine:
             del self._agg[k]
         flush_aggregates(self.redis, self.config, to_flush)
 
+    async def flush_all_aggregates(self) -> None:
+        """
+        Flush ALL buckets — including the current one — to Redis.
+
+        Intended for graceful-shutdown hooks. Clears the in-memory buffer.
+        Never raises, even if Redis is unavailable.
+        """
+        if not self._agg:
+            return
+        snapshot = dict(self._agg)
+        self._agg.clear()
+        flush_aggregates(self.redis, self.config, snapshot)
+
     def aggregated_history(self, service: Optional[str] = None, last_n_buckets: int = 10) -> List[dict]:
         """Return aggregated history for *service* from Redis hashes."""
         svc = service or self.config.service_name
@@ -155,8 +180,12 @@ class AlertEngine:
     # ── Ingestion stats ───────────────────────────────────────────────────────
 
     def get_ingestion_stats(self) -> Dict[str, Any]:
-        """Return a snapshot of ingestion counters."""
-        return dict(self._stats)
+        """Return a snapshot of ingestion and alert counters."""
+        return {
+            **self._stats,
+            "dropped_agg_keys": self._dropped_agg_keys,
+            "dropped_alerts":   self._dropped_alerts,
+        }
 
     # ── Alert queue ───────────────────────────────────────────────────────────
 
@@ -171,6 +200,7 @@ class AlertEngine:
             self._alert_queue.put_nowait(evaluation)
             return True
         except asyncio.QueueFull:
+            self._dropped_alerts += 1
             return False
 
     async def alert_delivery_loop(self) -> None:

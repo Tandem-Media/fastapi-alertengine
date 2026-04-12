@@ -1029,7 +1029,9 @@ class TestFlushAggregatesStorage:
         rdb.pipeline.assert_called_once_with(transaction=False)
         pipe = rdb.pipeline.return_value
         pipe.hset.assert_called_once()
-        pipe.expire.assert_called_once()
+        # Two expire calls: one for the hash key, one for the ZSET index key.
+        assert pipe.expire.call_count == 2
+        pipe.zadd.assert_called_once()
         pipe.execute.assert_called_once()
 
     def test_empty_snapshot_is_noop(self):
@@ -1040,6 +1042,7 @@ class TestFlushAggregatesStorage:
 
     def test_key_format(self):
         from fastapi_alertengine.storage import flush_aggregates
+        import json
         rdb = _make_redis()
         config = AlertConfig(agg_key_prefix="myapp:agg")
         snapshot = {("my-svc", 1234567200, "/api/data", "POST", "2xx"): [1, 50.0, 50.0]}
@@ -1048,8 +1051,11 @@ class TestFlushAggregatesStorage:
         call_args = pipe.hset.call_args[0]
         assert call_args[0] == "myapp:agg:my-svc:1234567200"
         assert call_args[1] == "/api/data|POST|2xx"
-        # value format: count|total|max
-        assert call_args[2].startswith("1|50.000|50.000")
+        # Value is now JSON: {"c": count, "t": total, "m": max}
+        v = json.loads(call_args[2])
+        assert v["c"] == 1
+        assert abs(v["t"] - 50.0) < 0.001
+        assert abs(v["m"] - 50.0) < 0.001
 
     def test_ttl_applied(self):
         from fastapi_alertengine.storage import flush_aggregates
@@ -1058,8 +1064,9 @@ class TestFlushAggregatesStorage:
         snapshot = {("svc", 1000, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
         flush_aggregates(rdb, config, snapshot)
         pipe = rdb.pipeline.return_value
-        expire_call = pipe.expire.call_args[0]
-        assert expire_call[1] == 7200
+        # All expire calls (hash key + index key) must use the configured TTL.
+        for call in pipe.expire.call_args_list:
+            assert call[0][1] == 7200
 
     def test_survives_pipeline_error(self):
         from fastapi_alertengine.storage import flush_aggregates
@@ -1077,17 +1084,18 @@ class TestReadAggregates:
     def test_returns_empty_on_no_data(self):
         from fastapi_alertengine.storage import read_aggregates
         rdb = _make_redis()
-        rdb.scan.return_value = (0, [])
+        rdb.zrevrange.return_value = []
         result = read_aggregates(rdb, AlertConfig(), "my-svc")
         assert result == []
 
     def test_parses_stored_data(self):
+        """Legacy pipe-delimited values are still parsed correctly."""
         from fastapi_alertengine.storage import read_aggregates
         rdb = _make_redis()
         config = AlertConfig(agg_key_prefix="alertengine:agg")
-        key = "alertengine:agg:my-svc:1712345220"
-        rdb.scan.return_value = (0, [key])
-        rdb.hgetall.return_value = {"/api|GET|2xx": "10|500.000|80.000"}
+        rdb.zrevrange.return_value = ["1712345220"]
+        # Pipeline execute returns one HGETALL result per bucket.
+        rdb.pipeline.return_value.execute.return_value = [{"/api|GET|2xx": "10|500.000|80.000"}]
 
         result = read_aggregates(rdb, config, "my-svc", last_n_buckets=5)
         assert len(result) == 1
@@ -1102,21 +1110,21 @@ class TestReadAggregates:
         assert row["bucket_ts"] == 1712345220
 
     def test_filters_strictly_by_service(self):
-        """SCAN uses the service pattern — only matching keys are scanned."""
+        """ZREVRANGE index key is scoped to the requested service."""
         from fastapi_alertengine.storage import read_aggregates
         rdb = _make_redis()
-        rdb.scan.return_value = (0, [])  # scanner returns nothing for wrong service
+        rdb.zrevrange.return_value = []
 
-        result = read_aggregates(rdb, AlertConfig(), "other-svc", last_n_buckets=5)
+        read_aggregates(rdb, AlertConfig(), "other-svc", last_n_buckets=5)
 
-        # The SCAN pattern passed should contain the service name
-        scan_call = rdb.scan.call_args
-        assert "other-svc" in scan_call[1].get("match", "")
+        # The index key in the ZREVRANGE call must contain the service name.
+        zrevrange_call = rdb.zrevrange.call_args
+        assert "other-svc" in zrevrange_call[0][0]
 
     def test_survives_redis_error(self):
         from fastapi_alertengine.storage import read_aggregates
         rdb = _make_redis()
-        rdb.scan.side_effect = RuntimeError("Redis down")
+        rdb.zrevrange.side_effect = RuntimeError("Redis down")
         # Must not raise
         result = read_aggregates(rdb, AlertConfig(), "svc")
         assert result == []
@@ -1128,23 +1136,24 @@ class TestReadAggregates:
 class TestAggregatedHistory:
     def test_returns_list(self):
         engine = _make_engine()
-        engine.redis.scan.return_value = (0, [])
+        engine.redis.zrevrange.return_value = []
         result = engine.aggregated_history()
         assert isinstance(result, list)
 
     def test_uses_config_service_name_by_default(self):
         engine = _make_engine(service_name="my-svc")
-        engine.redis.scan.return_value = (0, [])
+        engine.redis.zrevrange.return_value = []
         engine.aggregated_history()
-        scan_call = engine.redis.scan.call_args
-        assert "my-svc" in scan_call[1].get("match", "")
+        zrevrange_call = engine.redis.zrevrange.call_args
+        # The index key (first positional arg) must contain the service name.
+        assert "my-svc" in zrevrange_call[0][0]
 
     def test_accepts_explicit_service(self):
         engine = _make_engine(service_name="default")
-        engine.redis.scan.return_value = (0, [])
+        engine.redis.zrevrange.return_value = []
         engine.aggregated_history(service="explicit-svc")
-        scan_call = engine.redis.scan.call_args
-        assert "explicit-svc" in scan_call[1].get("match", "")
+        zrevrange_call = engine.redis.zrevrange.call_args
+        assert "explicit-svc" in zrevrange_call[0][0]
 
 
 # ── Ingestion stats ───────────────────────────────────────────────────────────
@@ -1296,7 +1305,7 @@ class TestNewEndpoints:
         app = FastAPI()
         with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
             rdb = _make_redis()
-            rdb.scan.return_value = (0, [])
+            rdb.zrevrange.return_value = []
             mock_redis_mod.Redis.from_url.return_value = rdb
             engine = instrument(app)
         return app, engine
@@ -1346,7 +1355,7 @@ class TestNewEndpoints:
         app = FastAPI()
         with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
             rdb = _make_redis()
-            rdb.scan.return_value = (0, [])
+            rdb.zrevrange.return_value = []
             mock_redis_mod.Redis.from_url.return_value = rdb
             instrument(app)
 
@@ -1381,3 +1390,320 @@ class TestNewEndpoints:
             client.post("/alerts/evaluate")
 
         assert len(calls) == 1  # endpoint must have called enqueue_alert exactly once
+
+
+# ── ZSET index ────────────────────────────────────────────────────────────────
+
+
+class TestZsetIndex:
+    def test_flush_creates_zadd_entry(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        pipe = rdb.pipeline.return_value
+        pipe.zadd.assert_called_once()
+        # The ZADD key must contain the service name.
+        zadd_key = pipe.zadd.call_args[0][0]
+        assert "svc" in zadd_key
+
+    def test_flush_zadd_member_is_bucket_ts_string(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        snapshot = {("svc", 1712345220, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        pipe = rdb.pipeline.return_value
+        mapping = pipe.zadd.call_args[0][1]
+        assert "1712345220" in mapping
+        assert mapping["1712345220"] == 1712345220
+
+    def test_read_uses_zrevrange_not_scan(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        rdb.zrevrange.return_value = []
+        read_aggregates(rdb, AlertConfig(), "svc")
+        rdb.zrevrange.assert_called_once()
+        rdb.scan.assert_not_called()
+
+    def test_read_zrevrange_uses_correct_index_key(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_key_prefix="myapp:agg")
+        rdb.zrevrange.return_value = []
+        read_aggregates(rdb, config, "my-svc", last_n_buckets=5)
+        call_args = rdb.zrevrange.call_args[0]
+        assert call_args[0] == "myapp:agg:index:my-svc"
+        assert call_args[1] == 0
+        assert call_args[2] == 4  # last_n_buckets - 1
+
+    def test_read_pipelines_hgetall_for_each_bucket(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        rdb.zrevrange.return_value = ["1712345280", "1712345220"]
+        rdb.pipeline.return_value.execute.return_value = [{}, {}]
+        read_aggregates(rdb, AlertConfig(), "svc", last_n_buckets=5)
+        pipe = rdb.pipeline.return_value
+        assert pipe.hgetall.call_count == 2
+        pipe.execute.assert_called_once()
+
+    def test_flush_index_key_gets_expire(self):
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_key_prefix="alertengine:agg", agg_ttl_seconds=900)
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [1, 10.0, 10.0]}
+        flush_aggregates(rdb, config, snapshot)
+        pipe = rdb.pipeline.return_value
+        # Both the hash key and index key should get an expire.
+        expire_keys = [call[0][0] for call in pipe.expire.call_args_list]
+        assert any("index:svc" in k for k in expire_keys)
+        assert all(call[0][1] == 900 for call in pipe.expire.call_args_list)
+
+    def test_zadd_is_idempotent_for_same_bucket(self):
+        """Flushing the same bucket twice does not create duplicate index entries."""
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [5, 100.0, 30.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        pipe = rdb.pipeline.return_value
+        # zadd is called twice (once per flush call) — same member, same score:
+        # Redis would just update the score (no-op for identical data).
+        assert pipe.zadd.call_count == 2
+
+
+# ── JSON encoding ─────────────────────────────────────────────────────────────
+
+
+class TestJsonEncoding:
+    def test_value_is_stored_as_json(self):
+        import json
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [5, 100.0, 30.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        pipe = rdb.pipeline.return_value
+        raw_value = pipe.hset.call_args[0][2]
+        v = json.loads(raw_value)  # must not raise
+        assert v["c"] == 5
+        assert abs(v["t"] - 100.0) < 0.001
+        assert abs(v["m"] - 30.0) < 0.001
+
+    def test_json_value_parsed_correctly_by_read(self):
+        import json
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_key_prefix="alertengine:agg")
+        rdb.zrevrange.return_value = ["1712345220"]
+        json_val = json.dumps({"c": 10, "t": 500.0, "m": 80.0})
+        rdb.pipeline.return_value.execute.return_value = [{"/api|GET|2xx": json_val}]
+
+        result = read_aggregates(rdb, config, "svc")
+        assert len(result) == 1
+        assert result[0]["count"] == 10
+        assert abs(result[0]["avg_latency_ms"] - 50.0) < 0.01
+        assert result[0]["max_latency_ms"] == 80.0
+
+    def test_old_pipe_format_still_parses(self):
+        """Backward-compat: values written in old format are still readable."""
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        config = AlertConfig(agg_key_prefix="alertengine:agg")
+        rdb.zrevrange.return_value = ["1712345220"]
+        rdb.pipeline.return_value.execute.return_value = [{"/api|GET|2xx": "10|500.000|80.000"}]
+
+        result = read_aggregates(rdb, config, "svc")
+        assert len(result) == 1
+        assert result[0]["count"] == 10
+        assert abs(result[0]["avg_latency_ms"] - 50.0) < 0.01
+        assert result[0]["max_latency_ms"] == 80.0
+
+    def test_malformed_value_is_skipped(self):
+        from fastapi_alertengine.storage import read_aggregates
+        rdb = _make_redis()
+        rdb.zrevrange.return_value = ["1712345220"]
+        rdb.pipeline.return_value.execute.return_value = [{"/api|GET|2xx": "not_json_or_pipe"}]
+        # Must not raise; bad entries are skipped.
+        result = read_aggregates(rdb, AlertConfig(), "svc")
+        assert result == []
+
+    def test_json_keys_match_expected_schema(self):
+        import json
+        from fastapi_alertengine.storage import flush_aggregates
+        rdb = _make_redis()
+        snapshot = {("svc", 1000, "/x", "GET", "2xx"): [2, 40.0, 25.0]}
+        flush_aggregates(rdb, AlertConfig(), snapshot)
+        raw = rdb.pipeline.return_value.hset.call_args[0][2]
+        v = json.loads(raw)
+        assert set(v.keys()) == {"c", "t", "m"}
+
+
+# ── Aggregation memory guard ──────────────────────────────────────────────────
+
+
+class TestAggregationMemoryGuard:
+    def test_exceeding_max_agg_keys_drops_new_key(self):
+        from fastapi_alertengine.engine import MAX_AGG_KEYS
+        engine = _make_engine()
+        # Pre-fill the buffer to the limit.
+        for i in range(MAX_AGG_KEYS):
+            engine._agg[("svc", 0, f"/p{i}", "GET", "2xx")] = [1, 10.0, 10.0]
+        assert len(engine._agg) == MAX_AGG_KEYS
+
+        initial_dropped = engine._dropped_agg_keys
+        engine._aggregate_batch([{"path": "/new", "method": "GET", "status_code": 200, "latency_ms": 5.0}])
+
+        assert engine._dropped_agg_keys > initial_dropped
+        assert len(engine._agg) == MAX_AGG_KEYS  # no new key added
+
+    def test_existing_key_still_accumulates_at_capacity(self):
+        from fastapi_alertengine.engine import MAX_AGG_KEYS
+        engine = _make_engine()
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        existing_key = ("default", now_bucket, "/exist", "GET", "2xx")
+        engine._agg[existing_key] = [1, 10.0, 10.0]
+        # Fill remaining capacity.
+        for i in range(MAX_AGG_KEYS - 1):
+            engine._agg[("svc", 0, f"/p{i}", "GET", "2xx")] = [1, 10.0, 10.0]
+        assert len(engine._agg) == MAX_AGG_KEYS
+
+        engine._aggregate_batch([{"path": "/exist", "method": "GET", "status_code": 200, "latency_ms": 5.0}])
+
+        # Existing key must accumulate (count goes from 1 → 2).
+        assert engine._agg[existing_key][0] == 2
+        assert engine._dropped_agg_keys == 0
+
+    def test_below_limit_no_drops(self):
+        engine = _make_engine()
+        engine._aggregate_batch([{"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0}])
+        assert engine._dropped_agg_keys == 0
+
+    def test_dropped_agg_keys_exposed_in_stats(self):
+        engine = _make_engine()
+        engine._dropped_agg_keys = 42
+        stats = engine.get_ingestion_stats()
+        assert stats["dropped_agg_keys"] == 42
+
+    def test_max_agg_keys_constant_is_exported(self):
+        from fastapi_alertengine.engine import MAX_AGG_KEYS
+        assert MAX_AGG_KEYS == 50_000
+
+
+# ── Dropped alerts ────────────────────────────────────────────────────────────
+
+
+class TestDroppedAlerts:
+    def test_full_queue_increments_dropped_alerts(self):
+        engine = _make_engine()
+        for _ in range(1000):  # fill to maxsize
+            engine._alert_queue.put_nowait({"status": "ok"})
+        engine.enqueue_alert({"status": "critical"})
+        assert engine._dropped_alerts == 1
+
+    def test_multiple_drops_accumulate(self):
+        engine = _make_engine()
+        for _ in range(1000):
+            engine._alert_queue.put_nowait({"status": "ok"})
+        engine.enqueue_alert({"status": "a"})
+        engine.enqueue_alert({"status": "b"})
+        assert engine._dropped_alerts == 2
+
+    def test_successful_enqueue_does_not_increment(self):
+        engine = _make_engine()
+        engine.enqueue_alert({"status": "ok"})
+        assert engine._dropped_alerts == 0
+
+    def test_dropped_alerts_exposed_in_stats(self):
+        engine = _make_engine()
+        engine._dropped_alerts = 7
+        stats = engine.get_ingestion_stats()
+        assert stats["dropped_alerts"] == 7
+
+    def test_ingestion_stats_has_all_new_keys(self):
+        engine = _make_engine()
+        stats = engine.get_ingestion_stats()
+        assert "dropped_agg_keys" in stats
+        assert "dropped_alerts" in stats
+
+
+# ── Shutdown flush ────────────────────────────────────────────────────────────
+
+
+class TestShutdownFlush:
+    def test_flush_all_writes_current_bucket(self):
+        engine = _make_engine()
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        key = ("default", now_bucket, "/x", "GET", "2xx")
+        engine._agg[key] = [5, 100.0, 30.0]
+
+        asyncio.run(engine.flush_all_aggregates())
+
+        engine.redis.pipeline.assert_called()
+
+    def test_flush_all_clears_buffer(self):
+        engine = _make_engine()
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        engine._agg[("default", now_bucket, "/x", "GET", "2xx")] = [1, 10.0, 10.0]
+
+        asyncio.run(engine.flush_all_aggregates())
+
+        assert engine._agg == {}
+
+    def test_flush_all_empty_buffer_is_noop(self):
+        engine = _make_engine()
+        asyncio.run(engine.flush_all_aggregates())
+        engine.redis.pipeline.assert_not_called()
+
+    def test_flush_all_survives_redis_error(self):
+        engine = _make_engine()
+        engine.redis.pipeline.return_value.execute.side_effect = RuntimeError("boom")
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        engine._agg[("default", now_bucket, "/x", "GET", "2xx")] = [1, 10.0, 10.0]
+        # Must not raise.
+        asyncio.run(engine.flush_all_aggregates())
+
+    def test_flush_all_includes_both_past_and_current_buckets(self):
+        engine = _make_engine()
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        past_bucket = now_bucket - bucket_size
+
+        engine._agg[("default", now_bucket,  "/a", "GET", "2xx")] = [1, 10.0, 10.0]
+        engine._agg[("default", past_bucket, "/b", "GET", "2xx")] = [2, 20.0, 15.0]
+
+        asyncio.run(engine.flush_all_aggregates())
+
+        assert engine._agg == {}
+
+    def test_shutdown_hook_registered_in_instrument(self):
+        """instrument() must register a shutdown handler."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            rdb = _make_redis()
+            rdb.zrevrange.return_value = []
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            instrument(app)
+        assert len(app.router.on_shutdown) >= 1
+
+    def test_shutdown_hook_calls_flush_all(self):
+        """The registered shutdown hook must call flush_all_aggregates."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            rdb = _make_redis()
+            rdb.zrevrange.return_value = []
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+
+        bucket_size = engine.config.agg_bucket_seconds
+        now_bucket  = int(time.time()) // bucket_size * bucket_size
+        engine._agg[("default", now_bucket, "/x", "GET", "2xx")] = [3, 60.0, 25.0]
+
+        # TestClient triggers startup + shutdown lifecycles.
+        with TestClient(app):
+            pass  # shutdown happens on __exit__
+
+        # Buffer must be empty after shutdown.
+        assert engine._agg == {}
