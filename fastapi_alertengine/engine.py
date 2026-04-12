@@ -1,6 +1,7 @@
 # fastapi_alertengine/engine.py
 
 import asyncio
+import collections
 import logging
 import time
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,42 @@ _DRAIN_SLEEP_S    = 0.05
 # New keys are dropped (and counted) when this limit is reached.
 MAX_AGG_KEYS      = 50_000
 
+# ── Null Redis (memory mode) ──────────────────────────────────────────────────
+
+
+class _NullPipeline:
+    """No-op pipeline returned by _NullRedis.pipeline()."""
+
+    def xadd(self, *a, **kw):   return self
+    def hset(self, *a, **kw):   return self
+    def expire(self, *a, **kw): return self
+    def zadd(self, *a, **kw):   return self
+    def hgetall(self, *a, **kw): return self
+
+    def execute(self, *a, **kw): return []
+
+
+class _NullRedis:
+    """
+    Silent no-op Redis client used when Redis is unavailable or not configured.
+
+    All write operations are discarded; all read operations return empty results.
+    ``ping()`` always raises so callers can detect the memory-mode condition.
+    """
+
+    def ping(self):
+        raise ConnectionError("_NullRedis: no Redis backend configured")
+
+    def xadd(self, *a, **kw):    pass
+    def xrevrange(self, *a, **kw): return []
+    def zrevrange(self, *a, **kw): return []
+    def hgetall(self, *a, **kw):  return {}
+    def expire(self, *a, **kw):   pass
+    def zadd(self, *a, **kw):     pass
+
+    def pipeline(self, *a, **kw):
+        return _NullPipeline()
+
 
 class AlertEngine:
     """
@@ -29,11 +66,33 @@ class AlertEngine:
     flushed to Redis Streams in batches by the background ``drain()`` task.
     A separate ``alert_delivery_loop()`` task processes the alert queue for
     non-blocking Slack delivery.
+
+    Can be used standalone::
+
+        engine = AlertEngine(config)
+        engine.start(app)
+
+    Or via the one-liner helper::
+
+        instrument(app)
     """
 
-    def __init__(self, redis, config: AlertConfig) -> None:
+    def __init__(self, redis=None, config: Optional[AlertConfig] = None) -> None:
+        # Support single-arg form: AlertEngine(config) where config is passed
+        # as the first positional argument.
+        if isinstance(redis, AlertConfig) and config is None:
+            config, redis = redis, None
+        if config is None:
+            config = AlertConfig()
+        if redis is None:
+            redis = _NullRedis()
+
         self.redis  = redis
         self.config = config
+        # True when operating without a live Redis backend.
+        self._memory_mode: bool = isinstance(redis, _NullRedis)
+        # Rolling buffer of recent raw events for memory-mode evaluate().
+        self._recent: collections.deque = collections.deque(maxlen=200)
         # Metric ingestion queue — bounded; newest metric dropped on overflow.
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=10_000)
         # In-memory aggregation buffer.
@@ -115,6 +174,7 @@ class AlertEngine:
 
         New aggregation keys are silently dropped (and counted) when the buffer
         exceeds MAX_AGG_KEYS to prevent unbounded memory growth.
+        Also appends raw events to ``_recent`` for memory-mode evaluation.
         """
         bucket_size = self.config.agg_bucket_seconds
         now_bucket  = int(time.time()) // bucket_size * bucket_size
@@ -126,6 +186,13 @@ class AlertEngine:
             status_code  = metric.get("status_code", 0)
             latency      = float(metric.get("latency_ms", 0.0))
             status_group = f"{status_code // 100}xx"
+
+            # Append to rolling buffer for memory-mode evaluate().
+            self._recent.append({
+                "latency_ms":  latency,
+                "type":        "webhook" if "webhook" in path else "api",
+                "status_code": status_code,
+            })
 
             key = (service, now_bucket, path, method, status_group)
             if key not in self._agg:
@@ -285,6 +352,10 @@ class AlertEngine:
     # ── Analysis ──────────────────────────────────────────────────────────────
 
     def _fetch_recent(self, last_n: int = 200):
+        if self._memory_mode:
+            items = list(self._recent)
+            return items[-last_n:] if len(items) > last_n else items
+
         try:
             raw = self.redis.xrevrange(self.config.stream_key, count=last_n)
         except Exception:
@@ -374,3 +445,94 @@ class AlertEngine:
             },
             "timestamp": int(time.time()),
         }
+
+    # ── Lifecycle manager ─────────────────────────────────────────────────────
+
+    def start(self, app, *, health_path: str = "/health/alerts") -> "AlertEngine":
+        """
+        Wire the engine into a FastAPI application as a fully automatic runtime.
+
+        This is the single orchestrator that handles:
+        * mode detection (Redis vs in-memory fallback)
+        * request metrics middleware
+        * background task startup (drain + alert delivery)
+        * shutdown hook (flush remaining aggregates)
+        * auto-registration of all observability endpoints
+
+        It is called internally by ``instrument()``, but can also be used
+        directly when you construct the engine yourself::
+
+            engine = AlertEngine(AlertConfig(service_name="my-api"))
+            engine.start(app)
+
+        Prints exactly one startup line, e.g.::
+
+            fastapi-alertengine initialized (redis mode)
+            fastapi-alertengine initialized (memory mode)
+
+        Returns ``self`` for convenient chaining.
+        """
+        # ── Mode detection ────────────────────────────────────────────────────
+        if isinstance(self.redis, _NullRedis):
+            # No redis client supplied; try to create one from config.
+            import redis as _redis_lib
+            try:
+                client = _redis_lib.Redis.from_url(
+                    self.config.redis_url, decode_responses=True
+                )
+                client.ping()
+                self.redis = client
+                self._memory_mode = False
+            except Exception:
+                self._memory_mode = True
+        else:
+            # Redis client was provided (e.g. by instrument()); test it.
+            try:
+                self.redis.ping()
+                self._memory_mode = False
+            except Exception:
+                self.redis = _NullRedis()
+                self._memory_mode = True
+
+        mode = "memory" if self._memory_mode else "redis"
+        print(f"fastapi-alertengine initialized ({mode} mode)")
+
+        # ── Middleware ────────────────────────────────────────────────────────
+        from .middleware import RequestMetricsMiddleware
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=self)
+
+        # ── Background tasks ──────────────────────────────────────────────────
+        engine = self
+
+        async def _start_background_tasks() -> None:
+            asyncio.create_task(engine.drain())
+            asyncio.create_task(engine.alert_delivery_loop())
+
+        async def _shutdown() -> None:
+            await engine.flush_all_aggregates()
+
+        app.router.on_startup.append(_start_background_tasks)
+        app.router.on_shutdown.append(_shutdown)
+
+        # ── Endpoints ─────────────────────────────────────────────────────────
+        @app.get(health_path, include_in_schema=False)
+        def _health_alerts():
+            return engine.evaluate()
+
+        @app.post("/alerts/evaluate", include_in_schema=False)
+        def _alerts_evaluate():
+            result = engine.evaluate()
+            engine.enqueue_alert(result)
+            return result
+
+        @app.get("/metrics/history", include_in_schema=False)
+        def _metrics_history(service: Optional[str] = None, last_n_buckets: int = 10):
+            return {"metrics": engine.aggregated_history(
+                service=service, last_n_buckets=last_n_buckets
+            )}
+
+        @app.get("/metrics/ingestion", include_in_schema=False)
+        def _metrics_ingestion():
+            return engine.get_ingestion_stats()
+
+        return self

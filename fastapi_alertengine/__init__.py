@@ -1,6 +1,5 @@
 # fastapi_alertengine/__init__.py
 
-import asyncio
 from typing import Optional
 
 import redis as redis_lib
@@ -34,8 +33,10 @@ def instrument(
     """
     Instrument a FastAPI app with alertengine in one line.
 
-    Wires the request metrics middleware, background drain + alert delivery
-    tasks, and four observability endpoints automatically.
+    Automatically detects whether Redis is available and falls back to
+    in-memory mode when it is not.  All background tasks, middleware, and
+    observability endpoints are registered without any further action from
+    the caller.
 
     Redis URL resolution order:
     1. The *redis_url* argument.
@@ -59,43 +60,6 @@ def instrument(
 
     redis_client = redis_lib.Redis.from_url(config.redis_url, decode_responses=True)
     engine = get_alert_engine(config=config, redis_client=redis_client)
-
-    app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
-
-    async def _start_background_tasks() -> None:
-        asyncio.create_task(engine.drain())
-        asyncio.create_task(engine.alert_delivery_loop())
-
-    async def _shutdown() -> None:
-        await engine.flush_all_aggregates()
-
-    app.router.on_startup.append(_start_background_tasks)
-    app.router.on_shutdown.append(_shutdown)
-
-    # ── GET /health/alerts ────────────────────────────────────────────────────
-    @app.get(health_path, include_in_schema=False)
-    def _health_alerts():
-        return engine.evaluate()
-
-    # ── POST /alerts/evaluate ─────────────────────────────────────────────────
-    @app.post("/alerts/evaluate", include_in_schema=False)
-    def _alerts_evaluate():
-        """Evaluate and enqueue alert for background Slack delivery."""
-        result = engine.evaluate()
-        engine.enqueue_alert(result)  # non-blocking; processed by alert_delivery_loop
-        return result
-
-    # ── GET /metrics/history ──────────────────────────────────────────────────
-    @app.get("/metrics/history", include_in_schema=False)
-    def _metrics_history(service: Optional[str] = None, last_n_buckets: int = 10):
-        """Aggregated per-minute metrics filtered by service."""
-        return {"metrics": engine.aggregated_history(service=service, last_n_buckets=last_n_buckets)}
-
-    # ── GET /metrics/ingestion ────────────────────────────────────────────────
-    @app.get("/metrics/ingestion", include_in_schema=False)
-    def _metrics_ingestion():
-        """Ingestion counters: enqueued, dropped, last_drain_at."""
-        return engine.get_ingestion_stats()
-
+    engine.start(app, health_path=health_path)
     return engine
 

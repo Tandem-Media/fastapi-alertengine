@@ -1707,3 +1707,182 @@ class TestShutdownFlush:
 
         # Buffer must be empty after shutdown.
         assert engine._agg == {}
+
+
+# ── Plug-and-play runtime ─────────────────────────────────────────────────────
+
+
+class TestPlugAndPlay:
+    """Requirements: zero-config, memory fallback, auto loops, auto endpoints."""
+
+    # 1. instrument(app) with zero additional arguments
+    def test_instrument_zero_args(self):
+        """instrument(app) must work with no extra arguments."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            engine = instrument(app)
+        assert isinstance(engine, AlertEngine)
+
+    # 2. System runs without Redis (memory mode fallback)
+    def test_runs_without_redis(self):
+        """When Redis ping fails the engine switches to memory mode."""
+        app = FastAPI()
+        rdb = _make_redis()
+        rdb.ping.side_effect = ConnectionError("no redis")
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+        assert engine._memory_mode is True
+
+    def test_memory_mode_health_endpoint_works(self):
+        """In memory mode the /health/alerts endpoint must return a valid response."""
+        app = FastAPI()
+        rdb = _make_redis()
+        rdb.ping.side_effect = ConnectionError("no redis")
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            instrument(app)
+        with TestClient(app) as client:
+            resp = client.get("/health/alerts")
+        assert resp.status_code == 200
+        assert resp.json()["status"] in ("ok", "warning", "critical")
+
+    def test_memory_mode_evaluate_uses_recent_buffer(self):
+        """In memory mode evaluate() reads from _recent, not Redis xrevrange."""
+        app = FastAPI()
+        rdb = _make_redis()
+        rdb.ping.side_effect = ConnectionError("no redis")
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+
+        # Inject events directly into _recent
+        engine._recent.append({"latency_ms": 10.0, "type": "api", "status_code": 200})
+        result = engine.evaluate()
+        assert result["status"] in ("ok", "warning", "critical")
+        assert result.get("metrics", {}).get("sample_size", 0) > 0
+        # xrevrange should NOT have been called (memory mode bypasses Redis reads)
+        rdb.xrevrange.assert_not_called()
+
+    # 3. System runs without Slack configured
+    def test_runs_without_slack(self):
+        """Missing slack_webhook_url must not crash the system."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            engine = instrument(app)
+        assert engine.config.slack_webhook_url is None
+        # deliver_alert must return False, not raise
+        result = asyncio.run(engine.deliver_alert({"status": "critical", "metrics": {}}))
+        assert result is False
+
+    # 4. All background loops start automatically
+    def test_background_loops_start_automatically(self):
+        """startup hook must register drain + alert_delivery_loop tasks."""
+        app = FastAPI()
+        tasks_started: list = []
+
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+
+        original_create_task = asyncio.create_task
+
+        async def _run():
+            nonlocal tasks_started
+            with patch("fastapi_alertengine.engine.asyncio.create_task",
+                       side_effect=lambda coro: (tasks_started.append(coro.__name__),
+                                                 original_create_task(coro))[1]):
+                for hook in app.router.on_startup:
+                    await hook()
+
+        asyncio.run(_run())
+        assert "drain" in tasks_started
+        assert "alert_delivery_loop" in tasks_started
+
+    # 5. Endpoints are auto-registered
+    def test_all_endpoints_auto_registered(self):
+        """instrument() must register all four observability endpoints."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        with TestClient(app) as client:
+            assert client.get("/health/alerts").status_code == 200
+            assert client.post("/alerts/evaluate").status_code == 200
+            assert client.get("/metrics/history").status_code == 200
+            assert client.get("/metrics/ingestion").status_code == 200
+
+    # 6. No manual engine instantiation required
+    def test_no_manual_instantiation_required(self):
+        """instrument() is self-contained: callers need not build an engine."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            engine = instrument(app)
+        # engine is returned for optional advanced use, but all endpoints work
+        # without the caller doing anything extra.
+        with TestClient(app) as client:
+            data = client.get("/health/alerts").json()
+        assert "status" in data
+
+    # AlertEngine(config) one-arg form + engine.start(app)
+    def test_alert_engine_single_arg_config_form(self):
+        """AlertEngine(config) must work without passing a redis client."""
+        config = AlertConfig()
+        engine = AlertEngine(config)
+        assert engine.config is config
+
+    def test_engine_start_wires_app(self):
+        """engine.start(app) wires all endpoints onto the app."""
+        app = FastAPI()
+        config = AlertConfig()
+        engine = AlertEngine(config)
+        # In memory mode (no real Redis), start() should not crash
+        engine.start(app)
+        assert engine._memory_mode is True
+        with TestClient(app) as client:
+            assert client.get("/health/alerts").status_code == 200
+
+    def test_startup_print_shows_mode(self, capsys):
+        """instrument() must print exactly one line indicating the mode."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        captured = capsys.readouterr()
+        lines = [l for l in captured.out.splitlines() if "fastapi-alertengine initialized" in l]
+        assert len(lines) == 1
+        assert "mode" in lines[0]
+
+    def test_startup_print_memory_mode(self, capsys):
+        """When Redis is unavailable the startup line must say 'memory mode'."""
+        app = FastAPI()
+        rdb = _make_redis()
+        rdb.ping.side_effect = ConnectionError("no redis")
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = rdb
+            instrument(app)
+        captured = capsys.readouterr()
+        assert "memory mode" in captured.out
+
+    def test_aggregate_batch_populates_recent(self):
+        """_aggregate_batch must append events to _recent for memory-mode eval."""
+        engine = _make_engine()
+        engine._aggregate_batch([
+            {"path": "/api/x", "method": "GET", "status_code": 200, "latency_ms": 42.0}
+        ])
+        assert len(engine._recent) == 1
+        item = engine._recent[0]
+        assert item["latency_ms"] == 42.0
+        assert item["status_code"] == 200
+        assert item["type"] == "api"
+
+    def test_webhook_path_classified_in_recent(self):
+        """Webhook paths must be classified as 'webhook' in _recent."""
+        engine = _make_engine()
+        engine._aggregate_batch([
+            {"path": "/webhook/notify", "method": "POST", "status_code": 200, "latency_ms": 5.0}
+        ])
+        assert engine._recent[0]["type"] == "webhook"
