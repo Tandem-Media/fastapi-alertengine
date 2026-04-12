@@ -3,14 +3,15 @@
 Redis Streams read/write for request metrics.
 
 Two public functions:
-  write_metric(rdb, config, path, method, status_code, latency_ms)
+  write_metric(rdb, config, metric)      -- metric is a dict with keys:
+                                            path, method, status_code, latency_ms
   read_metrics(rdb, config, last_n) -> list[RequestMetricEvent]
 
 Both fail silently on Redis errors.
 """
 
 import logging
-from typing import Any, List
+from typing import List
 
 from .config import AlertConfig
 from .schemas import RequestMetricEvent
@@ -24,22 +25,23 @@ def _classify(path: str) -> str:
 
 def write_metric(
     rdb,
-    config:      AlertConfig,
-    path:        str,
-    method:      str,
-    status_code: int,
-    latency_ms:  float,
+    config: AlertConfig,
+    metric: dict,
 ) -> None:
-    """Append one request event to the Redis Stream. Never raises."""
+    """
+    Append one request event to the Redis Stream. Never raises.
+
+    *metric* must contain the keys: path, method, status_code, latency_ms.
+    """
     try:
         rdb.xadd(
             config.stream_key,
             {
-                "path":        path,
-                "method":      method,
-                "status":      str(status_code),
-                "latency_ms":  f"{latency_ms:.3f}",
-                "type":        _classify(path),
+                "path":       metric["path"],
+                "method":     str(metric["method"]).upper(),
+                "status":     str(metric["status_code"]),
+                "latency_ms": f"{metric['latency_ms']:.3f}",
+                "type":       _classify(metric["path"]),
             },
             maxlen=config.stream_maxlen,
             approximate=True,

@@ -1,5 +1,6 @@
 # fastapi_alertengine/middleware.py
 
+import time
 from typing import Callable
 
 from fastapi import Request
@@ -10,9 +11,8 @@ from .engine import AlertEngine
 
 class RequestMetricsMiddleware(BaseHTTPMiddleware):
     """
-    Minimal middleware that forwards request info to AlertEngine.
-
-    You can expand this later to track real latency and custom dimensions.
+    FastAPI/Starlette middleware that times every request and enqueues the
+    metric for asynchronous persistence to Redis Streams via ``engine.drain()``.
     """
 
     def __init__(self, app, alert_engine: AlertEngine) -> None:
@@ -20,10 +20,15 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
         self.alert_engine = alert_engine
 
     async def dispatch(self, request: Request, call_next: Callable):
-        # TODO: add real timing; for now, just call the downstream app
+        start = time.perf_counter()
         response = await call_next(request)
+        latency_ms = (time.perf_counter() - start) * 1000
 
-        # Example hook point for future: record request metrics in Redis stream, etc.
-        # self.alert_engine.record_request(...)
+        self.alert_engine.enqueue_metric({
+            "path":        request.url.path,
+            "method":      request.method,
+            "status_code": response.status_code,
+            "latency_ms":  latency_ms,
+        })
 
         return response
