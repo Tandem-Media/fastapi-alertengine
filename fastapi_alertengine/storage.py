@@ -2,12 +2,13 @@
 """
 Redis Streams read/write for request metrics.
 
-Two public functions:
-  write_metric(rdb, config, metric)      -- metric is a dict with keys:
-                                            path, method, status_code, latency_ms
-  read_metrics(rdb, config, last_n) -> list[RequestMetricEvent]
+Public functions:
+  write_metric(rdb, config, metric)       -- write one metric dict
+  write_batch(rdb, config, metrics)       -- write many metrics via pipeline
+  read_metrics(rdb, config, last_n)       -> list[RequestMetricEvent]
+  aggregate(rdb, config, last_n)          -> dict
 
-Both fail silently on Redis errors.
+All Redis operations fail silently.
 """
 
 import logging
@@ -23,6 +24,19 @@ def _classify(path: str) -> str:
     return "webhook" if "webhook" in path else "api"
 
 
+def _build_fields(config: AlertConfig, metric: dict) -> dict:
+    """Build the Redis Stream field map from a metric dict."""
+    return {
+        "path":         metric["path"],
+        "method":       str(metric["method"]).upper(),
+        "status":       str(metric["status_code"]),
+        "latency_ms":   f"{metric['latency_ms']:.3f}",
+        "type":         _classify(metric["path"]),
+        "service_name": metric.get("service_name", config.service_name),
+        "instance_id":  metric.get("instance_id", config.instance_id),
+    }
+
+
 def write_metric(
     rdb,
     config: AlertConfig,
@@ -31,23 +45,44 @@ def write_metric(
     """
     Append one request event to the Redis Stream. Never raises.
 
-    *metric* must contain the keys: path, method, status_code, latency_ms.
+    Required keys: path, method, status_code, latency_ms.
+    Optional keys: service_name, instance_id (fall back to config values).
     """
     try:
         rdb.xadd(
             config.stream_key,
-            {
-                "path":       metric["path"],
-                "method":     str(metric["method"]).upper(),
-                "status":     str(metric["status_code"]),
-                "latency_ms": f"{metric['latency_ms']:.3f}",
-                "type":       _classify(metric["path"]),
-            },
+            _build_fields(config, metric),
             maxlen=config.stream_maxlen,
             approximate=True,
         )
     except Exception as exc:
         logger.warning("fastapi_alertengine.write_metric failed: %s", exc)
+
+
+def write_batch(
+    rdb,
+    config: AlertConfig,
+    metrics: List[dict],
+) -> None:
+    """
+    Write a list of metric dicts using a Redis pipeline for efficiency.
+
+    Never raises — individual pipeline errors are swallowed.
+    """
+    if not metrics:
+        return
+    try:
+        pipe = rdb.pipeline(transaction=False)
+        for metric in metrics:
+            pipe.xadd(
+                config.stream_key,
+                _build_fields(config, metric),
+                maxlen=config.stream_maxlen,
+                approximate=True,
+            )
+        pipe.execute()
+    except Exception as exc:
+        logger.warning("fastapi_alertengine.write_batch failed: %s", exc)
 
 
 def read_metrics(

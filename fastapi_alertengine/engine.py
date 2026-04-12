@@ -1,73 +1,148 @@
 # fastapi_alertengine/engine.py
 
 import asyncio
-import collections
 import logging
 import time
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 from .config import AlertConfig
-from .storage import write_metric
+from .storage import read_metrics, write_batch
 
 logger = logging.getLogger(__name__)
 
-MAX_QUEUE_SIZE = 10_000
+# Public constant — kept for backwards-compatibility with any code that imports it.
+MAX_QUEUE_SIZE   = 10_000
+_DRAIN_BATCH_SIZE = 100
+_DRAIN_SLEEP_S    = 0.05
 
 
 class AlertEngine:
     """
     Real-time SLO / latency alert engine.
 
-    Uses a bounded in-memory queue (drained to Redis Streams) and rolling
-    window analysis to produce ok / warning / critical signals.
+    Metrics are pushed onto a bounded ``asyncio.Queue`` by the middleware and
+    flushed to Redis Streams in batches by the background ``drain()`` task.
+    Slack alert delivery is available via ``deliver_alert()``.
     """
 
     def __init__(self, redis, config: AlertConfig) -> None:
-        self.redis = redis
+        self.redis  = redis
         self.config = config
-        self._queue: collections.deque = collections.deque()
+        # asyncio.Queue is both thread-safe and async-friendly.
+        # maxsize enforces the backpressure bound.
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=10_000)
+        # Timestamp of last Slack notification for rate-limiting.
+        self._last_slack_ts: float = 0.0
 
     # ── Ingestion ─────────────────────────────────────────────────────────────
 
     def enqueue_metric(self, metric: dict) -> None:
         """
-        Push one metric dict onto the in-memory queue.
+        Push one metric dict onto the queue without blocking the request path.
 
-        If the queue is full the oldest entry is dropped so memory stays
-        bounded at MAX_QUEUE_SIZE items.
-
+        If the queue is full the metric is silently dropped (backpressure).
         Expected keys: path, method, status_code, latency_ms.
+        service_name and instance_id are added from config if absent.
         """
-        if len(self._queue) >= MAX_QUEUE_SIZE:
-            self._queue.popleft()
-        self._queue.append(metric)
+        metric.setdefault("service_name", self.config.service_name)
+        metric.setdefault("instance_id",  self.config.instance_id)
+        try:
+            self._queue.put_nowait(metric)
+        except asyncio.QueueFull:
+            pass  # drop newest: discard the incoming metric when the queue is full
 
     # ── Background drain ──────────────────────────────────────────────────────
 
     async def drain(self) -> None:
         """
-        Continuously flush the in-memory queue to Redis Streams.
+        Continuously flush the metric queue to Redis Streams in batches.
 
-        Designed to be run as a long-lived background task via
-        ``asyncio.create_task(engine.drain())``.  Shuts down cleanly on
-        ``CancelledError`` and recovers from unexpected exceptions instead of
-        dying permanently.
+        Designed for ``asyncio.create_task(engine.drain())``. Stops cleanly on
+        ``CancelledError``; recovers from all other exceptions.
         """
         while True:
             try:
-                while self._queue:
-                    metric = self._queue.popleft()
+                batch: List[dict] = []
+                # Drain up to _DRAIN_BATCH_SIZE items without blocking.
+                while len(batch) < _DRAIN_BATCH_SIZE and not self._queue.empty():
                     try:
-                        write_metric(self.redis, self.config, metric)
-                    except Exception:
-                        # Per-metric failure must not kill the loop.
-                        pass
-                await asyncio.sleep(0.05)
+                        batch.append(self._queue.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+
+                if batch:
+                    write_batch(self.redis, self.config, batch)
+
+                await asyncio.sleep(_DRAIN_SLEEP_S)
             except asyncio.CancelledError:
                 break  # clean shutdown
             except Exception:
                 logger.exception("drain() loop encountered an unexpected error; recovering")
                 await asyncio.sleep(1.0)
+
+    # ── Slack delivery ────────────────────────────────────────────────────────
+
+    async def deliver_alert(self, evaluation: Dict[str, Any]) -> bool:
+        """
+        Post an alert to Slack if a webhook URL is configured and the
+        rate-limit window has elapsed.
+
+        Returns ``True`` if a message was sent, ``False`` otherwise.
+        """
+        url = self.config.slack_webhook_url
+        if not url:
+            return False
+
+        now = time.monotonic()
+        if now - self._last_slack_ts < self.config.slack_rate_limit_seconds:
+            return False  # rate-limited
+
+        status  = evaluation.get("status", "unknown")
+        emoji   = {
+            "ok":       ":white_check_mark:",
+            "warning":  ":warning:",
+            "critical": ":rotating_light:",
+        }.get(status, ":question:")
+        metrics = evaluation.get("metrics", {})
+        message = (
+            f"{emoji} *fastapi-alertengine alert*\n"
+            f"Service: `{self.config.service_name}` | Instance: `{self.config.instance_id}`\n"
+            f"Status: *{status.upper()}*\n"
+            f"p95 latency: {metrics.get('overall_p95_ms', 0):.1f} ms | "
+            f"error rate: {metrics.get('error_rate', 0):.1%} | "
+            f"samples: {metrics.get('sample_size', 0)}"
+        )
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.post(url, json={"text": message})
+                resp.raise_for_status()
+            self._last_slack_ts = now
+            return True
+        except Exception as exc:
+            logger.warning("deliver_alert failed: %s", exc)
+            return False
+
+    # ── History ───────────────────────────────────────────────────────────────
+
+    def history(self, last_n: int = 100) -> List[dict]:
+        """
+        Return the most recent *last_n* raw metric events from Redis Streams
+        as plain dicts (no analysis).
+        """
+        events = read_metrics(self.redis, self.config, last_n)
+        return [
+            {
+                "path":        e.path,
+                "method":      e.method,
+                "status_code": e.status_code,
+                "latency_ms":  e.latency_ms,
+                "type":        e.type,
+            }
+            for e in events
+        ]
 
     # ── Analysis ──────────────────────────────────────────────────────────────
 
@@ -141,6 +216,8 @@ class AlertEngine:
 
         return {
             "status": status,
+            "service_name": self.config.service_name,
+            "instance_id":  self.config.instance_id,
             "metrics": {
                 "overall_p95_ms": overall_p95,
                 "webhook_p95_ms": webhook_p95,

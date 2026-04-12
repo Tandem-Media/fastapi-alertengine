@@ -6,9 +6,9 @@ All tests use MagicMock for Redis so no live Redis instance is required.
 
 import asyncio
 import os
+import time
 import warnings
-from collections import deque
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +22,7 @@ from fastapi_alertengine import (
     aggregate,
     get_alert_engine,
     instrument,
+    write_batch,
 )
 from fastapi_alertengine.client import _reset_engine
 from fastapi_alertengine.engine import MAX_QUEUE_SIZE
@@ -42,9 +43,14 @@ def _make_redis(decode_responses: bool = True) -> MagicMock:
     return rdb
 
 
-def _make_engine(decode_responses: bool = True) -> AlertEngine:
-    config = AlertConfig()
+def _make_engine(decode_responses: bool = True, **config_kwargs) -> AlertEngine:
+    config = AlertConfig(**config_kwargs)
     return AlertEngine(redis=_make_redis(decode_responses), config=config)
+
+
+def _queue_items(engine: AlertEngine) -> list:
+    """Return a snapshot list of items currently in the engine's asyncio.Queue."""
+    return list(engine._queue._queue)
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +116,7 @@ class TestInstrument:
         with TestClient(app) as client:
             client.get("/ping")
 
-        assert len(engine._queue) >= 1, "middleware should have enqueued a metric"
+        assert engine._queue.qsize() >= 1, "middleware should have enqueued a metric"
 
     def test_metrics_enqueued_contain_expected_keys(self):
         app = FastAPI()
@@ -127,7 +133,7 @@ class TestInstrument:
         with TestClient(app) as client:
             client.get("/ping")
 
-        metric = engine._queue[-1]
+        metric = _queue_items(engine)[-1]
         assert "path" in metric
         assert "method" in metric
         assert "status_code" in metric
@@ -161,6 +167,46 @@ class TestInstrument:
             mock_redis_mod.Redis.from_url.assert_called_once_with(
                 "redis://cfg:6379/2", decode_responses=True
             )
+
+    # ── New endpoints wired by instrument() ───────────────────────────────────
+
+    def test_alerts_evaluate_endpoint_registered(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        with TestClient(app) as client:
+            resp = client.post("/alerts/evaluate")
+        assert resp.status_code == 200
+
+    def test_alerts_evaluate_returns_valid_status(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        with TestClient(app) as client:
+            data = client.post("/alerts/evaluate").json()
+        assert "status" in data
+        assert data["status"] in ("ok", "warning", "critical")
+
+    def test_metrics_history_endpoint_registered(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        with TestClient(app) as client:
+            resp = client.get("/metrics/history")
+        assert resp.status_code == 200
+
+    def test_metrics_history_returns_metrics_key(self):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock_redis_mod:
+            mock_redis_mod.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        with TestClient(app) as client:
+            data = client.get("/metrics/history").json()
+        assert "metrics" in data
+        assert isinstance(data["metrics"], list)
 
 
 # ── Redis URL / config resolution ─────────────────────────────────────────────
@@ -251,31 +297,34 @@ class TestQueueBounding:
         engine = _make_engine()
         for i in range(MAX_QUEUE_SIZE + 500):
             engine.enqueue_metric({"path": "/", "method": "GET", "status_code": 200, "latency_ms": float(i)})
-        assert len(engine._queue) == MAX_QUEUE_SIZE
+        assert engine._queue.qsize() == MAX_QUEUE_SIZE
 
-    def test_oldest_metric_dropped_when_full(self):
+    def test_newest_metric_dropped_when_full(self):
+        """asyncio.Queue drops the newest (incoming) metric when full."""
         engine = _make_engine()
-        # Fill queue to capacity with sentinel value in first slot
+        # Enqueue sentinel as the first item
         engine.enqueue_metric({"path": "/first", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+        # Fill the rest of the queue
         for _ in range(MAX_QUEUE_SIZE - 1):
             engine.enqueue_metric({"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 0.0})
-        # One more pushes the first item out
+        # Queue is now full; this entry should be dropped
         engine.enqueue_metric({"path": "/last", "method": "GET", "status_code": 200, "latency_ms": 2.0})
 
-        paths = [m["path"] for m in engine._queue]
-        assert "/first" not in paths
-        assert "/last" in paths
+        paths = [m["path"] for m in _queue_items(engine)]
+        # Oldest item (/first) is still present; newest overflow (/last) was dropped
+        assert "/first" in paths
+        assert "/last" not in paths
 
     def test_queue_below_max_does_not_drop(self):
         engine = _make_engine()
         for i in range(MAX_QUEUE_SIZE - 1):
             engine.enqueue_metric({"path": f"/{i}", "method": "GET", "status_code": 200, "latency_ms": 0.0})
-        assert len(engine._queue) == MAX_QUEUE_SIZE - 1
+        assert engine._queue.qsize() == MAX_QUEUE_SIZE - 1
 
     def test_empty_queue_allows_enqueue(self):
         engine = _make_engine()
         engine.enqueue_metric({"path": "/", "method": "GET", "status_code": 200, "latency_ms": 5.0})
-        assert len(engine._queue) == 1
+        assert engine._queue.qsize() == 1
 
 
 # ── drain() robustness ────────────────────────────────────────────────────────
@@ -299,35 +348,49 @@ class TestDrainRobustness:
         asyncio.run(_run())
 
     def test_drain_flushes_queue_to_redis(self):
+        """drain() calls write_batch, which uses the pipeline's xadd."""
         engine = _make_engine()
         engine.enqueue_metric({"path": "/a", "method": "GET", "status_code": 200, "latency_ms": 10.0})
         engine.enqueue_metric({"path": "/b", "method": "POST", "status_code": 201, "latency_ms": 20.0})
 
         self._run_drain_once(engine)
 
-        assert engine.redis.xadd.call_count == 2
+        # write_batch uses a pipeline; pipeline.xadd should have been called twice
+        pipe = engine.redis.pipeline.return_value
+        assert pipe.xadd.call_count == 2
+        assert pipe.execute.call_count >= 1
 
-    def test_drain_continues_after_single_write_failure(self):
+    def test_drain_continues_after_write_batch_failure(self):
+        """If write_batch raises (patched at the engine level), drain recovers and continues."""
         engine = _make_engine()
 
         call_count = {"n": 0}
 
-        def flaky_xadd(*args, **kwargs):
+        def flaky_write_batch(rdb, config, batch):
             call_count["n"] += 1
             if call_count["n"] == 1:
-                raise RuntimeError("simulated Redis error")
-            # Second call succeeds without calling back into the mock
-            return "ok"
+                raise RuntimeError("simulated write_batch error")
+            # Subsequent calls succeed silently
 
-        engine.redis.xadd.side_effect = flaky_xadd
+        async def _run():
+            with patch("fastapi_alertengine.engine.write_batch", side_effect=flaky_write_batch):
+                task = asyncio.create_task(engine.drain())
+                # First metric → write_batch raises → drain sleeps 1s to recover
+                engine.enqueue_metric({"path": "/a", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+                await asyncio.sleep(1.2)   # wait past the 1s recovery sleep
+                # Second metric → write_batch should succeed on next iteration
+                engine.enqueue_metric({"path": "/b", "method": "GET", "status_code": 200, "latency_ms": 2.0})
+                await asyncio.sleep(0.1)   # give drain time to process
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
-        engine.enqueue_metric({"path": "/fail", "method": "GET", "status_code": 200, "latency_ms": 1.0})
-        engine.enqueue_metric({"path": "/ok", "method": "GET", "status_code": 200, "latency_ms": 2.0})
+        asyncio.run(_run())
 
-        self._run_drain_once(engine)
-
-        # Both metrics were attempted — first failed, second succeeded
-        assert call_count["n"] == 2
+        # write_batch was called at least twice: once (failed) then at least once more (recovered)
+        assert call_count["n"] >= 2
 
     def test_drain_queue_empty_after_flush(self):
         engine = _make_engine()
@@ -335,7 +398,7 @@ class TestDrainRobustness:
 
         self._run_drain_once(engine)
 
-        assert len(engine._queue) == 0
+        assert engine._queue.qsize() == 0
 
     def test_drain_stops_cleanly_on_cancel(self):
         engine = _make_engine()
@@ -350,6 +413,28 @@ class TestDrainRobustness:
 
         # Should not raise any exception
         asyncio.run(_cancel_immediately())
+
+    def test_drain_uses_batch_of_100(self):
+        """drain() pulls up to 100 metrics per iteration."""
+        engine = _make_engine()
+        for i in range(150):
+            engine.enqueue_metric({"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+
+        async def _run():
+            task = asyncio.create_task(engine.drain())
+            # One sleep cycle processes one batch
+            await asyncio.sleep(0.01)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        asyncio.run(_run())
+
+        pipe = engine.redis.pipeline.return_value
+        # First batch processes 100 items
+        assert pipe.xadd.call_count >= 100
 
 
 # ── middleware ────────────────────────────────────────────────────────────────
@@ -371,35 +456,35 @@ class TestMiddleware:
         app = self._make_app_with_middleware(engine)
         with TestClient(app) as client:
             client.get("/hello")
-        assert len(engine._queue) == 1
+        assert engine._queue.qsize() == 1
 
     def test_middleware_captures_correct_status_code(self):
         engine = _make_engine()
         app = self._make_app_with_middleware(engine)
         with TestClient(app) as client:
             client.get("/hello")
-        assert engine._queue[0]["status_code"] == 200
+        assert _queue_items(engine)[0]["status_code"] == 200
 
     def test_middleware_captures_path(self):
         engine = _make_engine()
         app = self._make_app_with_middleware(engine)
         with TestClient(app) as client:
             client.get("/hello")
-        assert engine._queue[0]["path"] == "/hello"
+        assert _queue_items(engine)[0]["path"] == "/hello"
 
     def test_middleware_captures_positive_latency(self):
         engine = _make_engine()
         app = self._make_app_with_middleware(engine)
         with TestClient(app) as client:
             client.get("/hello")
-        assert engine._queue[0]["latency_ms"] >= 0.0
+        assert _queue_items(engine)[0]["latency_ms"] >= 0.0
 
     def test_middleware_captures_method(self):
         engine = _make_engine()
         app = self._make_app_with_middleware(engine)
         with TestClient(app) as client:
             client.get("/hello")
-        assert engine._queue[0]["method"] == "GET"
+        assert _queue_items(engine)[0]["method"] == "GET"
 
     def test_middleware_multiple_requests_enqueue_all(self):
         engine = _make_engine()
@@ -407,7 +492,21 @@ class TestMiddleware:
         with TestClient(app) as client:
             for _ in range(5):
                 client.get("/hello")
-        assert len(engine._queue) == 5
+        assert engine._queue.qsize() == 5
+
+    def test_middleware_adds_service_name(self):
+        engine = _make_engine(service_name="my-service")
+        app = self._make_app_with_middleware(engine)
+        with TestClient(app) as client:
+            client.get("/hello")
+        assert _queue_items(engine)[0]["service_name"] == "my-service"
+
+    def test_middleware_adds_instance_id(self):
+        engine = _make_engine(instance_id="pod-abc")
+        app = self._make_app_with_middleware(engine)
+        with TestClient(app) as client:
+            client.get("/hello")
+        assert _queue_items(engine)[0]["instance_id"] == "pod-abc"
 
 
 # ── AlertEngine.evaluate() ────────────────────────────────────────────────────
@@ -458,7 +557,6 @@ class TestEvaluate:
         assert result["status"] == "critical"
 
     def test_moderate_error_rate_triggers_warning(self):
-        # 15% error rate → warning
         events = (
             [{"latency_ms": 10.0, "status_code": 500} for _ in range(15)]
             + [{"latency_ms": 10.0, "status_code": 200} for _ in range(85)]
@@ -494,7 +592,6 @@ class TestEvaluate:
     def test_status_field_read_correctly(self):
         """stream stores 'status', not 'status_code'; engine must read it right."""
         rdb = _make_redis()
-        # All 500s should give critical via error rate
         rdb.xrevrange.return_value = [
             (f"1-{i}", {"latency_ms": "10.0", "status": "500", "type": "api"})
             for i in range(30)
@@ -502,6 +599,18 @@ class TestEvaluate:
         engine = AlertEngine(redis=rdb, config=AlertConfig())
         result = engine.evaluate()
         assert result["metrics"]["error_rate"] == 1.0
+
+    def test_evaluate_includes_service_and_instance(self):
+        events = [{"latency_ms": 10.0, "status_code": 200} for _ in range(5)]
+        rdb = _make_redis()
+        rdb.xrevrange.return_value = [
+            (f"1-{i}", {"latency_ms": str(e["latency_ms"]), "status": str(e["status_code"]), "type": "api"})
+            for i, e in enumerate(events)
+        ]
+        engine = AlertEngine(redis=rdb, config=AlertConfig(service_name="svc-a", instance_id="pod-1"))
+        result = engine.evaluate()
+        assert result["service_name"] == "svc-a"
+        assert result["instance_id"] == "pod-1"
 
 
 # ── write_metric / storage ────────────────────────────────────────────────────
@@ -553,6 +662,45 @@ class TestStorage:
         call_kwargs = rdb.xadd.call_args[1]
         assert call_kwargs["maxlen"] == 999
 
+    def test_write_metric_stores_service_name(self):
+        rdb = _make_redis()
+        config = AlertConfig(service_name="my-svc")
+        write_metric(rdb, config, {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+        fields = rdb.xadd.call_args[0][1]
+        assert fields["service_name"] == "my-svc"
+
+    def test_write_metric_stores_instance_id(self):
+        rdb = _make_redis()
+        config = AlertConfig(instance_id="pod-xyz")
+        write_metric(rdb, config, {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0})
+        fields = rdb.xadd.call_args[0][1]
+        assert fields["instance_id"] == "pod-xyz"
+
+    def test_write_batch_uses_pipeline(self):
+        rdb = _make_redis()
+        metrics = [
+            {"path": "/a", "method": "GET", "status_code": 200, "latency_ms": 1.0},
+            {"path": "/b", "method": "POST", "status_code": 201, "latency_ms": 2.0},
+        ]
+        write_batch(rdb, AlertConfig(), metrics)
+        rdb.pipeline.assert_called_once_with(transaction=False)
+        pipe = rdb.pipeline.return_value
+        assert pipe.xadd.call_count == 2
+        pipe.execute.assert_called_once()
+
+    def test_write_batch_empty_list_is_noop(self):
+        rdb = _make_redis()
+        write_batch(rdb, AlertConfig(), [])
+        rdb.pipeline.assert_not_called()
+
+    def test_write_batch_survives_pipeline_error(self):
+        rdb = _make_redis()
+        rdb.pipeline.return_value.execute.side_effect = RuntimeError("pipeline error")
+        # Must not raise
+        write_batch(rdb, AlertConfig(), [
+            {"path": "/x", "method": "GET", "status_code": 200, "latency_ms": 1.0}
+        ])
+
 
 # ── AlertConfig ───────────────────────────────────────────────────────────────
 
@@ -563,6 +711,10 @@ class TestAlertConfig:
         assert config.redis_url == "redis://localhost:6379/0"
         assert config.stream_key == "anchorflow:request_metrics"
         assert config.stream_maxlen == 5000
+        assert config.service_name == "default"
+        assert config.instance_id == "default"
+        assert config.slack_webhook_url is None
+        assert config.slack_rate_limit_seconds == 10
 
     def test_env_prefix(self):
         env = {
@@ -575,6 +727,22 @@ class TestAlertConfig:
         assert config.redis_url == "redis://env:6379/0"
         assert config.stream_key == "env:stream"
         assert config.stream_maxlen == 1234
+
+    def test_service_name_configurable(self):
+        config = AlertConfig(service_name="payments-api")
+        assert config.service_name == "payments-api"
+
+    def test_instance_id_configurable(self):
+        config = AlertConfig(instance_id="pod-abc123")
+        assert config.instance_id == "pod-abc123"
+
+    def test_slack_webhook_url_configurable(self):
+        config = AlertConfig(slack_webhook_url="https://hooks.slack.com/x")
+        assert config.slack_webhook_url == "https://hooks.slack.com/x"
+
+    def test_slack_rate_limit_configurable(self):
+        config = AlertConfig(slack_rate_limit_seconds=30)
+        assert config.slack_rate_limit_seconds == 30
 
 
 # ── aggregate() ───────────────────────────────────────────────────────────────
@@ -596,3 +764,127 @@ class TestAggregate:
         result = aggregate(rdb, AlertConfig())
         assert result["overall_latency"]["p95_ms"] is None
         assert result["overall_latency"]["count"] == 0
+
+
+# ── Slack delivery ────────────────────────────────────────────────────────────
+
+
+class TestSlackDelivery:
+    def _make_engine_with_slack(self, webhook_url: str = "https://hooks.slack.com/test") -> AlertEngine:
+        config = AlertConfig(slack_webhook_url=webhook_url)
+        return AlertEngine(redis=_make_redis(), config=config)
+
+    def test_deliver_alert_returns_false_without_webhook(self):
+        engine = _make_engine()  # no slack_webhook_url
+        result = asyncio.run(engine.deliver_alert({"status": "critical", "metrics": {}}))
+        assert result is False
+
+    def test_deliver_alert_sends_message_on_ok_status(self):
+        engine = self._make_engine_with_slack()
+        evaluation = {"status": "ok", "metrics": {"overall_p95_ms": 10.0, "error_rate": 0.0, "sample_size": 5}}
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        async def _run():
+            with patch("fastapi_alertengine.engine.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+                return await engine.deliver_alert(evaluation)
+
+        result = asyncio.run(_run())
+        assert result is True
+
+    def test_deliver_alert_rate_limited_on_second_call(self):
+        engine = self._make_engine_with_slack()
+        evaluation = {"status": "critical", "metrics": {"overall_p95_ms": 5000.0, "error_rate": 0.3, "sample_size": 10}}
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        async def _run():
+            with patch("fastapi_alertengine.engine.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+                first  = await engine.deliver_alert(evaluation)
+                second = await engine.deliver_alert(evaluation)  # within rate-limit window
+                return first, second
+
+        first, second = asyncio.run(_run())
+        assert first is True
+        assert second is False  # rate-limited
+
+    def test_deliver_alert_not_rate_limited_after_window(self):
+        engine = self._make_engine_with_slack()
+        engine.config = AlertConfig(slack_webhook_url="https://hooks.slack.com/test", slack_rate_limit_seconds=0)
+        evaluation = {"status": "critical", "metrics": {"overall_p95_ms": 5000.0, "error_rate": 0.3, "sample_size": 10}}
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+
+        async def _run():
+            with patch("fastapi_alertengine.engine.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(return_value=mock_response)
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+                first  = await engine.deliver_alert(evaluation)
+                second = await engine.deliver_alert(evaluation)  # rate_limit_seconds=0 → always allowed
+                return first, second
+
+        first, second = asyncio.run(_run())
+        assert first is True
+        assert second is True
+
+    def test_deliver_alert_survives_http_error(self):
+        engine = self._make_engine_with_slack()
+        evaluation = {"status": "warning", "metrics": {}}
+
+        async def _run():
+            with patch("fastapi_alertengine.engine.httpx.AsyncClient") as mock_client_cls:
+                mock_client = AsyncMock()
+                mock_client.post = AsyncMock(side_effect=RuntimeError("network error"))
+                mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+                mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+                return await engine.deliver_alert(evaluation)
+
+        result = asyncio.run(_run())
+        assert result is False  # failure is swallowed
+
+
+# ── engine.history() ──────────────────────────────────────────────────────────
+
+
+class TestHistory:
+    def test_history_returns_list(self):
+        engine = _make_engine()
+        result = engine.history()
+        assert isinstance(result, list)
+
+    def test_history_returns_empty_on_no_data(self):
+        engine = _make_engine()
+        assert engine.history() == []
+
+    def test_history_returns_metric_dicts(self):
+        rdb = _make_redis()
+        rdb.xrevrange.return_value = [
+            ("1-0", {"path": "/api/x", "method": "GET", "status": "200", "latency_ms": "12.500", "type": "api"}),
+        ]
+        engine = AlertEngine(redis=rdb, config=AlertConfig())
+        result = engine.history(last_n=10)
+        assert len(result) == 1
+        item = result[0]
+        assert item["path"] == "/api/x"
+        assert item["method"] == "GET"
+        assert item["status_code"] == 200
+        assert item["latency_ms"] == 12.5
+        assert item["type"] == "api"
+
+    def test_history_respects_last_n(self):
+        engine = _make_engine()
+        engine.history(last_n=50)
+        engine.redis.xrevrange.assert_called_with(engine.config.stream_key, count=50)

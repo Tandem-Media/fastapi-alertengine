@@ -10,7 +10,7 @@ from .config import AlertConfig
 from .engine import AlertEngine
 from .middleware import RequestMetricsMiddleware
 from .client import get_alert_engine
-from .storage import aggregate
+from .storage import aggregate, write_batch
 
 __all__ = [
     "AlertEngine",
@@ -18,10 +18,11 @@ __all__ = [
     "get_alert_engine",
     "AlertConfig",
     "aggregate",
+    "write_batch",
     "instrument",
 ]
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 def instrument(
@@ -33,12 +34,18 @@ def instrument(
     """
     Instrument a FastAPI app with alertengine in one line.
 
-    Wires the request metrics middleware, a background drain task, and a
-    health/evaluation endpoint automatically.  Redis URL resolution order:
+    Wires the request metrics middleware, a background drain task, and three
+    observability endpoints automatically.  Redis URL resolution order:
 
     1. The *redis_url* argument.
     2. The ``ALERTENGINE_REDIS_URL`` environment variable.
     3. ``redis://localhost:6379/0`` (built-in default).
+
+    Auto-registered endpoints
+    -------------------------
+    GET  *health_path*         — evaluate() result (default ``/health/alerts``)
+    POST /alerts/evaluate      — evaluate() + optional Slack delivery
+    GET  /metrics/history      — recent raw metrics from Redis Stream
 
     Usage::
 
@@ -79,9 +86,23 @@ def instrument(
 
     app.router.on_startup.append(_start_drain)
 
+    # ── GET /health/alerts ────────────────────────────────────────────────────
     @app.get(health_path, include_in_schema=False)
     def _health_alerts():
         return engine.evaluate()
+
+    # ── POST /alerts/evaluate ─────────────────────────────────────────────────
+    @app.post("/alerts/evaluate", include_in_schema=False)
+    async def _alerts_evaluate():
+        """Evaluate + deliver to Slack if configured and not rate-limited."""
+        result = engine.evaluate()
+        await engine.deliver_alert(result)
+        return result
+
+    # ── GET /metrics/history ──────────────────────────────────────────────────
+    @app.get("/metrics/history", include_in_schema=False)
+    def _metrics_history(last_n: int = 100):
+        return {"metrics": engine.history(last_n=last_n)}
 
     return engine
 
