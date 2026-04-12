@@ -359,6 +359,8 @@ Features:
 
 ---
 
+## 🏦 Why This Exists
+
 Most FastAPI apps either:
 
 * Run blind, or
