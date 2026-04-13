@@ -1,4 +1,5 @@
 # fastapi_alertengine/middleware.py
+
 import time
 from typing import Callable
 from fastapi import Request
@@ -10,45 +11,28 @@ from .storage import write_metric
 
 class RequestMetricsMiddleware(BaseHTTPMiddleware):
     """
-    Truly non-blocking ASGI middleware.
+    FastAPI/Starlette middleware that times every request and enqueues the
+    metric for asynchronous persistence to Redis Streams via ``engine.drain()``.
 
-    Enqueues metrics to in-memory deque for async drain to Redis.
-    Also writes directly so tests and envs without drain() work.
-
-    Wire the background drain task at app startup::
-
-        @app.on_event('startup')
-        async def start_drain():
-            asyncio.create_task(engine.drain())
+    The enqueue is always non-blocking: ``engine.enqueue_metric`` uses
+    ``Queue.put_nowait`` and silently drops the metric when the queue is full.
     """
 
     def __init__(self, app, alert_engine: AlertEngine) -> None:
         super().__init__(app)
         self._engine = alert_engine
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        start       = time.perf_counter()
-        status_code = 500  # default -- overwritten on success
-        try:
-            response    = await call_next(request)
-            status_code = response.status_code
-        except Exception:
-            raise
-        finally:
-            elapsed = (time.perf_counter() - start) * 1_000
-            metric = {
-                "path":        request.url.path,
-                "method":      request.method,
-                "status_code": status_code,
-                "latency_ms":  elapsed,
-            }
-            try:
-                self._engine.enqueue_metric(metric)
-                write_metric(
-                    self._engine.redis, self._engine.config,
-                    metric["path"], metric["method"],
-                    metric["status_code"], metric["latency_ms"]
-                )
-            except Exception:
-                pass
+    async def dispatch(self, request: Request, call_next: Callable):
+        start = time.perf_counter()
+        response = await call_next(request)
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        # service_name and instance_id are added by enqueue_metric from config.
+        self.alert_engine.enqueue_metric({
+            "path":        request.url.path,
+            "method":      request.method,
+            "status_code": response.status_code,
+            "latency_ms":  latency_ms,
+        })
+
         return response

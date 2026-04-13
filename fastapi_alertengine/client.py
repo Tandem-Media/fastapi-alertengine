@@ -18,6 +18,7 @@ FastAPI dependency:
         return engine.evaluate().as_dict()
 """
 
+import warnings
 from typing import Optional
 
 import redis as redis_lib
@@ -25,26 +26,26 @@ import redis as redis_lib
 from .config import AlertConfig
 from .engine import AlertEngine
 
-# Module-level singleton — avoids lru_cache's requirement that all
-# arguments be hashable (Pydantic BaseSettings is not hashable).
-_instance: Optional[AlertEngine] = None
+_engine: Optional[AlertEngine] = None
 
 
 def get_alert_engine(
-    config:       Optional[AlertConfig] = None,
-    redis_client: Optional[object]      = None,
+    config: Optional[AlertConfig] = None,
+    redis_client: Optional[object] = None,
 ) -> AlertEngine:
     """
-    Return a process-wide singleton AlertEngine.
+    Return (and cache) an ``AlertEngine`` singleton.
 
-    On first call, constructs the engine from the supplied (or default) config.
-    Subsequent calls return the same instance regardless of arguments.
+    If *redis_client* is omitted a new client is created from
+    ``config.redis_url`` with ``decode_responses=True``.
 
-    Call clear_alert_engine() to reset the singleton (useful in tests).
+    If a caller supplies their own *redis_client*, a warning is emitted when
+    ``decode_responses`` is not enabled, because Redis would then return raw
+    bytes and metrics would not be readable.
     """
-    global _instance
-    if _instance is not None:
-        return _instance
+    global _engine
+    if _engine is not None:
+        return _engine
 
     if config is None:
         config = AlertConfig()
@@ -54,12 +55,25 @@ def get_alert_engine(
             config.redis_url,
             decode_responses=True,
         )
+    else:
+        _warn_if_no_decode_responses(redis_client)
 
-    _instance = AlertEngine(config=config, redis=redis_client)
-    return _instance
+    _engine = AlertEngine(redis=redis_client, config=config)
+    return _engine
 
 
-def clear_alert_engine() -> None:
-    """Reset the singleton — primarily for use in tests."""
-    global _instance
-    _instance = None
+def _warn_if_no_decode_responses(client: object) -> None:
+    pool   = getattr(client, "connection_pool", None)
+    kwargs = getattr(pool, "connection_kwargs", {}) if pool else {}
+    if not kwargs.get("decode_responses", False):
+        warnings.warn(
+            "fastapi-alertengine: redis_client should be created with "
+            "decode_responses=True. Metrics may not be readable.",
+            stacklevel=3,
+        )
+
+
+def _reset_engine() -> None:
+    """Reset the cached singleton. Intended for use in tests only."""
+    global _engine
+    _engine = None

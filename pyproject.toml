@@ -23,6 +23,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "uvicorn[standard]",
+  "pytest",
+  "pytest-asyncio",
+  "httpx",
 ]
 
 [project.urls]
