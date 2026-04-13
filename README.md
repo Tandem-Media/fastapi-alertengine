@@ -1,334 +1,124 @@
 # ⚡ fastapi-alertengine
 
-**Production-ready observability for FastAPI — in one line.**
+**Production-ready FastAPI monitoring in one line.**
 
-Turn any FastAPI app into a real-time observability system with metrics, aggregation, alerts, and a live dashboard.
+No Prometheus. No Grafana. No dashboards. No Redis required to get started.
+
+Just install → instrument → done.
 
 ---
 
-🔥 **150/150 tests passing**
-🏦 **Derived from financial-grade infrastructure (AnchorFlow)**
+🔥 **164/164 tests passing**
+🏦 **Derived from financial-grade infrastructure (AnchorFlow / Tofamba)**
 🤖 **AI-agent friendly (works with Claude / Copilot / Cursor)**
-📦 **v1.3.0**
+⚡ **Memory mode — runs without Redis at all**
 
 ---
 
-## 🚀 One-line install
+## 🚀 Quickstart (one line)
 
-```
+```bash
 pip install fastapi-alertengine
 ```
-
-## ⚡ One-line integration
 
 ```python
 from fastapi import FastAPI
 from fastapi_alertengine import instrument
 
 app = FastAPI()
-instrument(app)
+instrument(app)   # set ALERTENGINE_REDIS_URL or run without Redis in memory mode
 ```
 
-That's it. No setup. No configuration required.
+That’s it. Four endpoints are now live on your app:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health/alerts` | Current SLO status — ok / warning / critical |
+| `POST /alerts/evaluate` | Evaluate + enqueue for Slack delivery |
+| `GET /metrics/history` | Aggregated per-minute metrics from Redis |
+| `GET /metrics/ingestion` | Ingestion counters (enqueued / dropped) |
 
 ---
 
-## 🧠 What happens automatically
+## ⚡ How it works
 
-When you call `instrument(app)`, fastapi-alertengine silently boots a full observability runtime:
-
-### 🟢 Ingestion layer
-- Captures every request via middleware
-- Async, non-blocking queue buffering
-- Backpressure-safe ingestion with drop tracking
-
-### 🔵 Processing layer
-- Batched Redis writes (or in-memory fallback mode)
-- Failure-safe pipeline execution
-
-### 🟣 Aggregation engine
-- Real-time per-minute bucket aggregation
-- Metrics grouped by: service, endpoint, method, status group
-- Precomputed time-series for instant queries
-
-### 🔴 Alerting system
-- Automatic anomaly detection (latency + error rate)
-- Async alert queue with background worker
-- Slack/webhook delivery (optional)
-- Rate-limited, failure-safe execution
-
-### ⚫ Observability API (auto-registered)
-- `/health/alerts` → system health + anomalies
-- `/metrics/history` → aggregated time-series data
-- `/metrics/ingestion` → queue + pipeline health
-- `/alerts/evaluate` → trigger alert evaluation
-
----
-
-## 📊 What you get instantly
-
-No dashboards to configure. No metrics pipeline to build.
-
-You immediately get:
-
-- P95 + P50 latency tracking
-- Error rate detection
-- Anomaly scoring vs baseline
-- Requests per minute
-- Endpoint-level performance breakdown
-- Live alert stream (Slack optional)
-- Ingestion health visibility (drops, queue size, throughput)
-
-### 3. Check your alert status
-
-```bash
-curl http://localhost:8000/health/alerts
 ```
-
-```json
-{
-  "status": "ok",
-  "service_name": "my-api",
-  "instance_id": "default",
-  "metrics": {
-    "overall_p95_ms": 45.2,
-    "webhook_p95_ms": 0.0,
-    "api_p95_ms": 45.2,
-    "error_rate": 0.0,
-    "anomaly_score": 0.12,
-    "sample_size": 128
-  },
-  "thresholds": {
-    "p95_warning_ms": 1000,
-    "p95_critical_ms": 3000,
-    "error_rate_warning": 0.1,
-    "error_rate_critical": 0.2,
-    "anomaly_warning": 1.0,
-    "anomaly_critical": 2.0
-  },
-  "timestamp": 1712954670
-}
+Request → middleware (enqueue only, ~0μs) → response returned immediately
+              ↓
+        deque (in-memory)
+              ↓  every 50ms
+        drain() → Redis Stream (batched pipeline)
+              ↓
+        evaluate() → GET /health/alerts
 ```
 
 ---
 
-## 🧩 Built-in dashboard (optional)
-
-A Streamlit-based observability console is included:
-
-```bash
-pip install -r dashboard/requirements.txt
-ALERTENGINE_BASE_URL=http://localhost:8000 streamlit run dashboard/app.py
-```
-
-It provides:
-
-- **Health strip** — 5 metric cards (status · P95 · error rate · RPM · health score), color-coded against thresholds
-- **Time-series charts** — requests/min, error rate %, avg+max latency with warning/critical reference lines
-- **Endpoint table** — sorted by `impact_score = request_count × avg_latency`
-- **Alerts panel** — severity card from `/health/alerts` with expandable threshold reference
-- **Ingestion diagnostics** — queue/agg/alert drop counters from `/metrics/ingestion`
-
----
-
-## ⚙️ Zero-config design
-
-fastapi-alertengine automatically adapts to your environment:
-
-| Environment | Behavior |
-|---|---|
-| Redis available | Full distributed observability mode |
-| Redis missing | In-memory safe mode |
-| Slack webhook set | Alert delivery enabled |
-| Slack missing | Alerts disabled (no failure) |
-
----
-
-## 🧠 Why it's fast
-
-Unlike traditional observability systems:
-
-- No log scanning
-- No query-time aggregation
-- No external dashboards required for core functionality
-
-Instead, metrics are pre-aggregated in real-time as requests happen. This means:
-
-- Constant-time queries
-- Stable performance under load
-- Predictable memory usage
-
----
-
-## 📡 Auto-registered endpoints
-
-`instrument()` registers four endpoints automatically:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/health/alerts` (configurable) | `evaluate()` result — current status |
-| `POST` | `/alerts/evaluate` | Evaluate + enqueue for Slack delivery |
-| `GET` | `/metrics/history` | Aggregated per-minute metrics (filter by `?service=`) |
-| `GET` | `/metrics/ingestion` | Ingestion counters: enqueued / dropped |
-
----
-
-## 🔥 Example response
+## 📊 Example output
 
 ```json
 {
   "status": "warning",
   "service_name": "payments-api",
-  "instance_id": "worker-1",
+  "instance_id": "pod-3",
   "metrics": {
-    "overall_p95_ms": 812.4,
+    "overall_p95_ms": 843.2,
     "webhook_p95_ms": 910.4,
-    "api_p95_ms": 720.1,
-    "error_rate": 0.19,
-    "anomaly_score": 1.4,
-    "sample_size": 187
+    "api_p95_ms":     720.1,
+    "error_rate":     0.012,
+    "anomaly_score":  0.84,
+    "sample_size":    187
   },
-  "thresholds": {
-    "p95_warning_ms": 1000,
-    "p95_critical_ms": 3000,
-    "error_rate_warning": 0.1,
-    "error_rate_critical": 0.2,
-    "anomaly_warning": 1.0,
-    "anomaly_critical": 2.0
-  },
-  "timestamp": 1712954670
+  "alerts": [
+    {
+      "type": "latency_spike",
+      "severity": "warning",
+      "message": "P95 latency (843ms) exceeds threshold (1000ms)"
+    }
+  ],
+  "timestamp": 1712756301
 }
 ```
 
 ---
 
-## 🧠 Design philosophy
+## ⚙️ Configuration
 
-fastapi-alertengine is built on a simple principle: **observability should be automatic, not configured.**
+All settings via environment variables (prefix: `ALERTENGINE_`):
 
-So instead of:
-- setting up Prometheus
-- configuring Grafana
-- wiring exporters
-- defining alert rules manually
-
-You do:
-
-```python
-instrument(app)
-```
-
----
-
-## 🚀 Production-ready features
-
-- Async ingestion pipeline
-- Redis-backed aggregation engine
-- Safe fallback in-memory mode
-- Batch processing for high throughput
-- Alert worker isolation
-- Service-aware observability
-- Drop tracking + ingestion metrics
-- Zero-crash design (fail-safe everywhere)
-
-## 🛡 Reliability guarantees
-
-- Never blocks request path
-- Never crashes due to Redis failure
-- Graceful degradation in all external dependencies
-- Backpressure-aware ingestion queue
-- Safe background worker recovery
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `ALERTENGINE_REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `ALERTENGINE_SERVICE_NAME` | `default` | Service name in every metric |
+| `ALERTENGINE_INSTANCE_ID` | `default` | Instance ID in every metric |
+| `ALERTENGINE_P95_WARNING_MS` | `1000` | P95 warning threshold (ms) |
+| `ALERTENGINE_P95_CRITICAL_MS` | `3000` | P95 critical threshold (ms) |
+| `ALERTENGINE_ERROR_RATE_WARNING_PCT` | `2.0` | Error rate warning (%) |
+| `ALERTENGINE_ERROR_RATE_CRITICAL_PCT` | `5.0` | Error rate critical (%) |
+| `ALERTENGINE_SLACK_WEBHOOK_URL` | `None` | Slack webhook for alert delivery |
+| `ALERTENGINE_SLACK_RATE_LIMIT_SECONDS` | `10` | Minimum seconds between Slack messages |
+| `ALERTENGINE_STREAM_MAXLEN` | `10000` | Max Redis Stream entries |
 
 ---
 
-## 🧰 Public API
+## 🧩 Manual wiring (full control)
 
 ```python
-from fastapi_alertengine import (
-    instrument,           # one-line setup (recommended)
-    AlertEngine,
-    RequestMetricsMiddleware,
-    get_alert_engine,
-    AlertConfig,
-    aggregate,
-    write_batch,
-)
-```
-
-### `instrument(app, ...)` — recommended
-
-```python
-engine = instrument(
-    app,
-    redis_url="redis://localhost:6379/0",  # or set ALERTENGINE_REDIS_URL
-    health_path="/health/alerts",          # default
-)
-```
-
-### `AlertEngine.evaluate()`
-
-```python
-result = engine.evaluate(window_size=200)
-print(result["status"])  # "ok" | "warning" | "critical"
-```
-
-### `AlertEngine.aggregated_history()`
-
-```python
-buckets = engine.aggregated_history(service="my-api", last_n_buckets=10)
-```
-
-### `AlertEngine.get_ingestion_stats()`
-
-```python
-stats = engine.get_ingestion_stats()
-# {"enqueued": 4200, "dropped": 0, "last_drain_at": 1712954670.1,
-#  "dropped_agg_keys": 0, "dropped_alerts": 0}
-```
-
-### `AlertConfig`
-
-```python
-from fastapi_alertengine import AlertConfig
-
-config = AlertConfig(
-    redis_url="redis://localhost:6379/0",
-    stream_key="anchorflow:request_metrics",
-    stream_maxlen=5000,
-    service_name="my-api",
-    instance_id="worker-1",
-    slack_webhook_url="https://hooks.slack.com/services/...",
-    slack_rate_limit_seconds=10,
-    agg_bucket_seconds=60,
-    agg_ttl_seconds=3600,
-)
-# Or via environment variables:
-#   ALERTENGINE_REDIS_URL=redis://...
-#   ALERTENGINE_STREAM_KEY=my:stream
-#   ALERTENGINE_STREAM_MAXLEN=10000
-#   ALERTENGINE_SERVICE_NAME=my-api
-#   ALERTENGINE_INSTANCE_ID=worker-1
-#   ALERTENGINE_SLACK_WEBHOOK_URL=https://hooks.slack.com/...
-#   ALERTENGINE_SLACK_RATE_LIMIT_SECONDS=10
-```
-
----
-
-## 🔧 Advanced (optional manual wiring)
-
-If you need full control over each component:
-
-```python
-import redis
-import asyncio
 from fastapi import FastAPI
-from fastapi_alertengine import AlertConfig, AlertEngine, RequestMetricsMiddleware, get_alert_engine
+from fastapi_alertengine import AlertEngine, AlertConfig, RequestMetricsMiddleware
 
-app = FastAPI()
-config = AlertConfig(redis_url="redis://localhost:6379/0", service_name="my-api")
-redis_client = redis.Redis.from_url(config.redis_url, decode_responses=True)
-engine = get_alert_engine(config=config, redis_client=redis_client)
+config = AlertConfig(service_name="payments-api", p95_critical_ms=500)
+engine = AlertEngine(config)
+engine.start(app)   # wires middleware, drain task, and all endpoints
+```
 
+Or wire each piece yourself:
+
+```python
+import asyncio
+from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
+
+engine = get_alert_engine(redis_url="redis://localhost:6379/0")
 app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
 
 @app.on_event("startup")
@@ -336,93 +126,35 @@ async def start_drain():
     asyncio.create_task(engine.drain())
     asyncio.create_task(engine.alert_delivery_loop())
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    await engine.flush_all_aggregates()
-
 @app.get("/health/alerts")
-def alerts_health():
-    return engine.evaluate(window_size=200)
-
-@app.post("/alerts/evaluate")
-def alerts_evaluate():
-    result = engine.evaluate()
-    engine.enqueue_alert(result)
-    return result
-
-@app.get("/metrics/history")
-def metrics_history(service: str = None, last_n_buckets: int = 10):
-    return {"metrics": engine.aggregated_history(service=service, last_n_buckets=last_n_buckets)}
-
-@app.get("/metrics/ingestion")
-def metrics_ingestion():
-    return engine.get_ingestion_stats()
+def health():
+    return engine.evaluate()
 ```
 
 ---
 
-## ⚙️ Configuration
+## ✅ Production readiness
 
-Metrics are written with these fields:
-
-| Field | Type | Description |
-|---|---|---|
-| `path` | string | Request path |
-| `method` | string | HTTP method (uppercase) |
-| `status` | string | HTTP status code |
-| `latency_ms` | string | Response time in ms (3 decimal places) |
-| `type` | string | `"api"` or `"webhook"` |
+- ✔️ **164/164 tests passing** (no live Redis required — `pip install fakeredis`)
+- ✔️ **Memory mode** — runs without Redis, metrics buffered in-process
+- ✔️ **Fail-safe** — Redis down never crashes requests or the drain loop
+- ✔️ **Backpressure** — queue capped at 10,000 events, drops oldest on overflow
+- ✔️ **Batched writes** — 100 events per Redis pipeline, 50ms drain interval
+- ✔️ **Graceful shutdown** — flushes all in-memory aggregates on app stop
+- ✔️ **Slack delivery** — rate-limited, non-blocking, survives HTTP errors
 
 ---
 
-## ⚙️ Defaults
+## 🚀 What’s coming (v1.5)
 
-| Metric | Threshold / Default |
-|---|---|
-| P95 Warning | 1000 ms |
-| P95 Critical | 3000 ms |
-| Anomaly Warning | 1.0 |
-| Anomaly Critical | 2.0 |
-| Error Rate Warning | 10% |
-| Error Rate Critical | 20% |
-| Queue Max Size | 10 000 |
-| Stream Max Length | 5 000 |
-| Agg Bucket Size | 60 s |
-| Agg TTL (Redis) | 3 600 s (1 h) |
-| Max Agg Keys (in-memory) | 50 000 |
-| Slack Rate Limit | 10 s |
+- Per-endpoint breakdown in evaluate()
+- alertengine-server Docker image (multi-service ingest)
+- Grafana dashboard provisioning
+- PagerDuty / OpsGenie routing
 
 ---
 
-## ✅ Verified Reliability
-
-- ✔️ 150/150 tests passing (no live Redis required)
-- ✔️ Works even if Redis fails (no crashes)
-- ✔️ Safe in production request paths (non-blocking enqueue)
-- ✔️ Accurate P95 + error rate calculations
-- ✔️ Always uses `decode_responses=True` — warns if you pass a client that doesn't
-- ✔️ Slack delivery rate-limited and non-blocking
-- ✔️ Aggregation buffer capped at 50 000 keys (memory-safe)
-
----
-
-## 📦 What's coming
-
-- Multi-service correlation views
-- Distributed tracing layer
-- Advanced anomaly detection
-- Hosted observability SaaS mode
-- Native Grafana/Prometheus bridge
-
----
-
-## 🤖 Built for AI-Assisted Development
-
-Clean API surface (`__all__`), minimal integration steps, and predictable outputs. Works seamlessly with Claude Code, GitHub Copilot, and Cursor.
-
----
-
-## 💬 Support & Contact
+## 💬 Support
 
 📧 [anchorflow@outlook.com](mailto:anchorflow@outlook.com)
 
@@ -432,4 +164,4 @@ Clean API surface (`__all__`), minimal integration steps, and predictable output
 
 ## 🛡️ License
 
-MIT License
+MIT
