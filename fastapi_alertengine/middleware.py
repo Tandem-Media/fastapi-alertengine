@@ -11,6 +11,11 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
     """
     FastAPI/Starlette middleware that times every request and enqueues
     the metric for async persistence to Redis Streams via engine.drain().
+
+    On the very first request it also prints a one-time "first signal
+    detected" summary so developers see immediate feedback that the engine
+    is active, along with a hint to enable incident actions if they are not
+    already configured.
     """
 
     def __init__(self, app, alert_engine: AlertEngine) -> None:
@@ -27,6 +32,9 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
             raise
         finally:
             latency_ms = (time.perf_counter() - start) * 1_000
+            is_first = self._engine._first_request_at is None
+            if is_first:
+                self._engine._first_request_at = time.time()
             try:
                 self._engine.enqueue_metric({
                     "path":        request.url.path,
@@ -36,4 +44,18 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
                 })
             except Exception:
                 pass
+            if is_first:
+                print(f"📡 First request detected")
+                print(f"  Service: {self._engine.config.service_name}")
+                print(f"  Path:    {request.url.path}")
+                print(f"  Latency: {latency_ms:.1f}ms")
+                print(f"  Status:  {status_code}")
+                # Progressive hint if actions router is not mounted
+                import os as _os
+                if not _os.getenv("ACTION_SECRET_KEY"):
+                    print(f"\n💡 Tip: Enable incident actions:")
+                    print(f"   from fastapi_alertengine import actions_router")
+                    print(f"   app.include_router(actions_router)")
+                print()
         return response
+

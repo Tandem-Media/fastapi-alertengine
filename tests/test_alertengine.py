@@ -1885,3 +1885,448 @@ class TestPlugAndPlay:
             {"path": "/webhook/notify", "method": "POST", "status_code": 200, "latency_ms": 5.0}
         ])
         assert engine._recent[0]["type"] == "webhook"
+
+
+# ── Onboarding experience ─────────────────────────────────────────────────────
+
+
+class TestOnboarding:
+    """
+    Tests for the zero-config onboarding experience:
+    startup banner, first-request detection, demo spike mode,
+    `/__alertengine/status` endpoint, and progressive hints.
+    """
+
+    def _instrument_memory(self, capsys=None):
+        """Instrument a fresh FastAPI app in memory mode (Redis ping fails)."""
+        app = FastAPI()
+        rdb = _make_redis()
+        rdb.ping.side_effect = ConnectionError("no redis")
+        with patch("fastapi_alertengine.redis_lib") as mock:
+            mock.Redis.from_url.return_value = rdb
+            engine = instrument(app)
+        return app, engine
+
+    def _instrument_redis(self):
+        """Instrument a fresh FastAPI app in Redis mode (mock Redis succeeds)."""
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock:
+            mock.Redis.from_url.return_value = _make_redis()
+            engine = instrument(app)
+        return app, engine
+
+    # ── 1. Startup banner ─────────────────────────────────────────────────────
+
+    def test_banner_has_separator_line(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "─" in out
+
+    def test_banner_shows_metrics_active(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "Metrics: ACTIVE" in out
+
+    def test_banner_shows_alerts_active(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "Alerts:" in out and "ACTIVE" in out
+
+    def test_banner_shows_actions_status(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "Actions:" in out
+
+    def test_banner_lists_health_endpoint(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "/health/alerts" in out
+
+    def test_banner_lists_status_endpoint(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "/__alertengine/status" in out
+
+    def test_banner_lists_metrics_history_endpoint(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "/metrics/history" in out
+
+    def test_banner_lists_metrics_ingestion_endpoint(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "/metrics/ingestion" in out
+
+    def test_banner_has_waiting_for_traffic(self, capsys):
+        self._instrument_redis()
+        out = capsys.readouterr().out
+        assert "Waiting for traffic" in out
+
+    def test_banner_actions_enabled_when_secret_and_router_mounted(self, capsys):
+        app = FastAPI()
+        from fastapi_alertengine import actions_router
+        app.include_router(actions_router)
+        with patch("fastapi_alertengine.redis_lib") as mock, \
+             patch.dict(os.environ, {"ACTION_SECRET_KEY": "test-secret"}):
+            mock.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        out = capsys.readouterr().out
+        assert "Actions: ENABLED" in out
+
+    def test_banner_actions_disabled_when_secret_missing(self, capsys):
+        app = FastAPI()
+        env = {k: v for k, v in os.environ.items() if k != "ACTION_SECRET_KEY"}
+        with patch("fastapi_alertengine.redis_lib") as mock, \
+             patch.dict(os.environ, env, clear=True):
+            mock.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        out = capsys.readouterr().out
+        assert "Actions: DISABLED" in out
+
+    def test_banner_custom_health_path_appears(self, capsys):
+        app = FastAPI()
+        with patch("fastapi_alertengine.redis_lib") as mock:
+            mock.Redis.from_url.return_value = _make_redis()
+            instrument(app, health_path="/custom/health")
+        out = capsys.readouterr().out
+        assert "/custom/health" in out
+
+    # ── 2. /__alertengine/status endpoint ─────────────────────────────────────
+
+    def test_status_endpoint_registered(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            resp = client.get("/__alertengine/status")
+        assert resp.status_code == 200
+
+    def test_status_endpoint_returns_mode(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["mode"] in ("memory", "redis")
+
+    def test_status_endpoint_mode_is_memory_when_redis_unavailable(self):
+        app, _ = self._instrument_memory()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["mode"] == "memory"
+
+    def test_status_endpoint_mode_is_redis_when_available(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["mode"] == "redis"
+
+    def test_status_endpoint_metrics_active(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["metrics_active"] is True
+
+    def test_status_endpoint_alerts_active(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["alerts_active"] is True
+
+    def test_status_endpoint_has_ingestion_key(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert "ingestion" in data
+        assert "enqueued" in data["ingestion"]
+
+    def test_status_endpoint_has_demo_mode_key(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert "demo_mode" in data
+
+    def test_status_endpoint_demo_mode_false_initially(self):
+        app, _ = self._instrument_memory()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["demo_mode"] is False
+
+    def test_status_endpoint_actions_enabled_false_without_router(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["actions_enabled"] is False
+
+    def test_status_endpoint_actions_enabled_true_with_router(self):
+        app = FastAPI()
+        from fastapi_alertengine import actions_router
+        app.include_router(actions_router)
+        with patch("fastapi_alertengine.redis_lib") as mock:
+            mock.Redis.from_url.return_value = _make_redis()
+            instrument(app)
+        with TestClient(app) as client:
+            data = client.get("/__alertengine/status").json()
+        assert data["actions_enabled"] is True
+
+    def test_status_endpoint_not_in_openapi_schema(self):
+        app, _ = self._instrument_redis()
+        with TestClient(app) as client:
+            schema = client.get("/openapi.json").json()
+        assert "/__alertengine/status" not in schema.get("paths", {})
+
+    # ── 3. First-request detection ────────────────────────────────────────────
+
+    def test_first_request_sets_first_request_at(self):
+        app = FastAPI()
+
+        @app.get("/ping")
+        def ping(): return {}
+
+        engine = _make_engine()
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+        assert engine._first_request_at is None
+        with TestClient(app) as client:
+            client.get("/ping")
+        assert engine._first_request_at is not None
+
+    def test_first_request_prints_signal_detected(self, capsys):
+        app = FastAPI()
+
+        @app.get("/ping")
+        def ping(): return {}
+
+        engine = _make_engine()
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+        with TestClient(app) as client:
+            client.get("/ping")
+        out = capsys.readouterr().out
+        assert "First request detected" in out
+
+    def test_first_request_print_contains_path(self, capsys):
+        app = FastAPI()
+
+        @app.get("/my-path")
+        def my_path(): return {}
+
+        engine = _make_engine()
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+        with TestClient(app) as client:
+            client.get("/my-path")
+        out = capsys.readouterr().out
+        assert "/my-path" in out
+
+    def test_first_request_print_contains_status_code(self, capsys):
+        app = FastAPI()
+
+        @app.get("/ok")
+        def ok(): return {}
+
+        engine = _make_engine()
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+        with TestClient(app) as client:
+            client.get("/ok")
+        out = capsys.readouterr().out
+        assert "200" in out
+
+    def test_first_request_print_occurs_only_once(self, capsys):
+        app = FastAPI()
+
+        @app.get("/ping")
+        def ping(): return {}
+
+        engine = _make_engine()
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+        with TestClient(app) as client:
+            for _ in range(5):
+                client.get("/ping")
+        out = capsys.readouterr().out
+        assert out.count("First request detected") == 1
+
+    def test_first_request_at_set_only_once_on_repeated_requests(self):
+        app = FastAPI()
+
+        @app.get("/ping")
+        def ping(): return {}
+
+        engine = _make_engine()
+        app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+        with TestClient(app) as client:
+            client.get("/ping")
+            first_ts = engine._first_request_at
+            client.get("/ping")
+        assert engine._first_request_at == first_ts
+
+    # ── 4. Demo mode state ────────────────────────────────────────────────────
+
+    def test_demo_allowed_in_memory_mode(self):
+        engine = AlertEngine(AlertConfig())
+        # AlertEngine starts as _NullRedis → memory mode
+        assert engine._memory_mode is True
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+        with patch.dict(os.environ, env, clear=True):
+            assert engine._demo_allowed() is True
+
+    def test_demo_not_allowed_in_redis_mode(self):
+        engine = _make_engine()
+        assert engine._memory_mode is False
+        assert engine._demo_allowed() is False
+
+    def test_demo_not_allowed_when_env_is_production(self):
+        engine = AlertEngine(AlertConfig())
+        with patch.dict(os.environ, {"ENV": "production"}):
+            assert engine._demo_allowed() is False
+
+    def test_demo_not_allowed_when_environment_is_prod(self):
+        engine = AlertEngine(AlertConfig())
+        with patch.dict(os.environ, {"ENVIRONMENT": "prod"}):
+            assert engine._demo_allowed() is False
+
+    def test_demo_not_allowed_when_disable_flag_set(self):
+        engine = AlertEngine(AlertConfig())
+        with patch.dict(os.environ, {"ALERTENGINE_DISABLE_DEMO": "1"}):
+            assert engine._demo_allowed() is False
+
+    def test_demo_not_allowed_when_disable_flag_true(self):
+        engine = AlertEngine(AlertConfig())
+        with patch.dict(os.environ, {"ALERTENGINE_DISABLE_DEMO": "true"}):
+            assert engine._demo_allowed() is False
+
+    def test_demo_mode_active_starts_false(self):
+        engine = AlertEngine(AlertConfig())
+        assert engine._demo_mode_active is False
+
+    def test_demo_alert_shown_starts_false(self):
+        engine = AlertEngine(AlertConfig())
+        assert engine._demo_alert_shown is False
+
+    def test_demo_spike_skipped_when_real_traffic_arrived(self):
+        """If _first_request_at is set, demo spike must not inject events."""
+        engine = AlertEngine(AlertConfig())
+        engine._first_request_at = time.time()
+
+        async def _run():
+            with patch.dict(os.environ, {"ALERTENGINE_DEMO_DELAY": "0"}):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        assert engine._demo_mode_active is False
+        assert len(engine._recent) == 0
+
+    def test_demo_spike_skipped_in_redis_mode(self):
+        """Demo spike must not run when memory mode is disabled."""
+        engine = _make_engine()
+        assert engine._memory_mode is False
+
+        async def _run():
+            with patch.dict(os.environ, {"ALERTENGINE_DEMO_DELAY": "0"}):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        assert engine._demo_mode_active is False
+        assert len(engine._recent) == 0
+
+    def test_demo_spike_injects_events_into_recent(self):
+        """When triggered, demo spike injects synthetic events into _recent."""
+        engine = AlertEngine(AlertConfig())
+        assert engine._memory_mode is True
+
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+
+        async def _run():
+            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        assert engine._demo_mode_active is True
+        assert len(engine._recent) > 0
+
+    def test_demo_spike_prints_demo_label(self, capsys):
+        engine = AlertEngine(AlertConfig())
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+
+        async def _run():
+            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        out = capsys.readouterr().out
+        assert "Demo Mode" in out
+
+    def test_demo_spike_prints_alert_if_threshold_exceeded(self, capsys):
+        engine = AlertEngine(AlertConfig())
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+
+        async def _run():
+            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        out = capsys.readouterr().out
+        # Demo events are high-latency, so an alert should fire
+        assert "ALERT DETECTED" in out
+
+    def test_demo_spike_prints_progressive_hint(self, capsys):
+        engine = AlertEngine(AlertConfig())
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+
+        async def _run():
+            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        out = capsys.readouterr().out
+        assert "actions_router" in out
+
+    def test_demo_spike_alert_shown_only_once(self, capsys):
+        engine = AlertEngine(AlertConfig())
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+
+        async def _run():
+            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
+                await engine._run_demo_spike()
+                # Calling a second time must not show the alert again
+                engine._first_request_at = None  # reset first-request gate
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        out = capsys.readouterr().out
+        assert out.count("ALERT DETECTED") == 1
+
+    def test_demo_spike_cancellation_is_safe(self):
+        """CancelledError must be swallowed cleanly."""
+        engine = AlertEngine(AlertConfig())
+
+        async def _run():
+            task = asyncio.create_task(engine._run_demo_spike())
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass  # should NOT propagate past _run_demo_spike
+
+        # Must not raise
+        asyncio.run(_run())
+
+    # ── 5. Status endpoint reflects demo state ────────────────────────────────
+
+    def test_status_endpoint_demo_mode_true_after_spike(self):
+        engine = AlertEngine(AlertConfig())
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
+
+        # Trigger demo spike synchronously
+        async def _run():
+            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
+                await engine._run_demo_spike()
+
+        asyncio.run(_run())
+        assert engine._demo_mode_active is True

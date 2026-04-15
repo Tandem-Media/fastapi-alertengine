@@ -3,6 +3,8 @@ import asyncio
 import collections
 import logging
 import math
+import os
+import random
 import time
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +19,10 @@ MAX_QUEUE_SIZE   = 10_000
 _DRAIN_BATCH_SIZE = 100
 _DRAIN_SLEEP_S    = 0.05
 MAX_AGG_KEYS      = 50_000
+
+# Seconds to wait for real traffic before activating demo mode.
+# Override with ALERTENGINE_DEMO_DELAY env var (useful in tests/CI).
+_DEMO_DELAY_S: int = 12
 
 
 class _NullPipeline:
@@ -72,6 +78,83 @@ class AlertEngine:
         self._alert_queue    = asyncio.Queue(maxsize=1_000)
         self._dropped_alerts = 0
         self._last_slack_ts  = 0.0
+        # Onboarding state
+        self._first_request_at: Optional[float] = None
+        self._demo_mode_active: bool = False
+        self._demo_alert_shown: bool = False
+
+    # ── Demo / onboarding helpers ─────────────────────────────────────────────
+
+    def _demo_allowed(self) -> bool:
+        """
+        Return True if demo spike mode is permitted for this engine instance.
+
+        Demo mode is suppressed in Redis mode (real infrastructure), in any
+        environment named 'production'/'prod', or when the caller sets
+        ``ALERTENGINE_DISABLE_DEMO=1``.
+        """
+        if not self._memory_mode:
+            return False
+        env = os.getenv("ENV", os.getenv("ENVIRONMENT", "")).lower()
+        if env in ("production", "prod"):
+            return False
+        if os.getenv("ALERTENGINE_DISABLE_DEMO", "").lower() in ("1", "true", "yes"):
+            return False
+        return True
+
+    async def _run_demo_spike(self) -> None:
+        """
+        Background task: inject synthetic traffic after ``ALERTENGINE_DEMO_DELAY``
+        seconds when no real traffic has arrived, so dashboards are never empty.
+
+        Only runs in memory mode and non-production environments.
+        """
+        try:
+            delay = int(os.getenv("ALERTENGINE_DEMO_DELAY", str(_DEMO_DELAY_S)))
+            await asyncio.sleep(delay)
+
+            if self._first_request_at is not None:
+                return  # real traffic arrived — demo not needed
+
+            if not self._demo_allowed():
+                return
+
+            self._demo_mode_active = True
+            print("\n🧪 Demo Mode: synthetic metrics generated for preview")
+
+            # Inject a mix of high-latency and error events.
+            for _ in range(45):
+                self._recent.append({
+                    "latency_ms": random.uniform(900, 2_500),
+                    "type": "api",
+                    "status_code": 200,
+                })
+            for _ in range(5):
+                self._recent.append({
+                    "latency_ms": random.uniform(100, 300),
+                    "type": "api",
+                    "status_code": 500,
+                })
+
+            # Evaluate and emit ONE showcase alert.
+            evaluation = self.evaluate()
+            if evaluation.get("alerts") and not self._demo_alert_shown:
+                self._demo_alert_shown = True
+                alert = evaluation["alerts"][0]
+                metric_val = evaluation["metrics"].get("overall_p95_ms", 0.0)
+                sev = alert.get("severity", "warning").upper()
+                print(f"\n⚠️  ALERT DETECTED (Demo)")
+                print(f"  Service:  {self.config.service_name}")
+                print(f"  Metric:   P95 latency breach")
+                print(f"  Value:    {metric_val:.0f}ms")
+                print(f"  Severity: {sev}")
+                print(f"\n💡 Tip: Enable incident actions:")
+                print(f"   from fastapi_alertengine import actions_router")
+                print(f"   app.include_router(actions_router)")
+        except asyncio.CancelledError:
+            pass
+
+    # ── Core metric ingestion ─────────────────────────────────────────────────
 
     def enqueue_metric(self, metric):
         metric.setdefault("service_name", self.config.service_name)
@@ -226,7 +309,10 @@ class AlertEngine:
                             "anomaly_score": round(anomaly,3), "sample_size": len(events)},
                 "alerts": alerts, "timestamp": ts}
 
+    # ── App wiring ────────────────────────────────────────────────────────────
+
     def start(self, app, *, health_path="/health/alerts"):
+        # Detect Redis availability.
         if isinstance(self.redis, _NullRedis):
             import redis as _rl
             try:
@@ -236,20 +322,72 @@ class AlertEngine:
         else:
             try: self.redis.ping(); self._memory_mode = False
             except Exception: self.redis = _NullRedis(); self._memory_mode = True
-        print(f"fastapi-alertengine initialized ({'memory' if self._memory_mode else 'redis'} mode)")
+
+        # ── Startup banner ────────────────────────────────────────────────────
+        mode_word  = "memory" if self._memory_mode else "redis"
+        mode_label = "memory (no Redis detected)" if self._memory_mode else "redis"
+        actions_key = bool(os.getenv("ACTION_SECRET_KEY"))
+        action_paths = {getattr(r, "path", "") for r in app.router.routes}
+        actions_mounted = "/action/confirm" in action_paths or "/action/restart" in action_paths
+        actions_status = "ENABLED" if (actions_key and actions_mounted) else "DISABLED"
+
+        print(f"⚡ fastapi-alertengine initialized ({mode_word} mode)")
+        print("─" * 50)
+        print(f"  Mode:    {mode_label}")
+        print(f"  Metrics: ACTIVE")
+        print(f"  Alerts:  ACTIVE")
+        print(f"  Actions: {actions_status}")
+        print(f"\n  Endpoints:")
+        print(f"    GET  {health_path}")
+        print(f"    POST /alerts/evaluate")
+        print(f"    GET  /metrics/history")
+        print(f"    GET  /metrics/ingestion")
+        print(f"    GET  /__alertengine/status")
+        print(f"\n  Waiting for traffic...")
+        print()
+
+        # ── Middleware and lifecycle hooks ─────────────────────────────────────
         from .middleware import RequestMetricsMiddleware
         app.add_middleware(RequestMetricsMiddleware, alert_engine=self)
         engine = self
-        async def _start(): asyncio.create_task(engine.drain()); asyncio.create_task(engine.alert_delivery_loop())
-        async def _stop(): await engine.flush_all_aggregates()
+
+        async def _start():
+            asyncio.create_task(engine.drain())
+            asyncio.create_task(engine.alert_delivery_loop())
+            if engine._demo_allowed():
+                asyncio.create_task(engine._run_demo_spike())
+
+        async def _stop():
+            await engine.flush_all_aggregates()
+
         app.router.on_startup.append(_start)
         app.router.on_shutdown.append(_stop)
+
+        # ── Auto-registered endpoints ──────────────────────────────────────────
         @app.get(health_path, include_in_schema=False)
         def _h(): return engine.evaluate()
+
         @app.post("/alerts/evaluate", include_in_schema=False)
         def _ae(): r = engine.evaluate(); engine.enqueue_alert(r); return r
+
         @app.get("/metrics/history", include_in_schema=False)
-        def _mh(service: Optional[str]=None, last_n_buckets: int=10): return {"metrics": engine.aggregated_history(service=service, last_n_buckets=last_n_buckets)}
+        def _mh(service: Optional[str]=None, last_n_buckets: int=10):
+            return {"metrics": engine.aggregated_history(service=service, last_n_buckets=last_n_buckets)}
+
         @app.get("/metrics/ingestion", include_in_schema=False)
         def _mi(): return engine.get_ingestion_stats()
+
+        @app.get("/__alertengine/status", include_in_schema=False)
+        def _status():
+            ap = {getattr(r, "path", "") for r in app.router.routes}
+            return {
+                "mode": "memory" if engine._memory_mode else "redis",
+                "metrics_active": True,
+                "alerts_active": True,
+                "actions_enabled": "/action/confirm" in ap,
+                "ingestion": engine.get_ingestion_stats(),
+                "demo_mode": engine._demo_mode_active,
+            }
+
         return self
+
