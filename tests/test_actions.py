@@ -13,8 +13,9 @@ Covers:
 import json
 import logging
 import os
+import subprocess
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import jwt
 import pytest
@@ -177,17 +178,71 @@ class TestLogAction:
 
 # ── services.py ───────────────────────────────────────────────────────────────
 
+_DOCKER_PATCH = "anchorflow.actions.services.subprocess.run"
+
+
+def _ok_run(container_id="abc123"):
+    """Return a mock CompletedProcess that represents a successful docker restart."""
+    m = MagicMock()
+    m.returncode = 0
+    m.stdout = container_id
+    m.stderr = ""
+    return m
+
+
+def _fail_run(stderr="No such container", returncode=1):
+    """Return a mock CompletedProcess that represents a failed docker restart."""
+    m = MagicMock()
+    m.returncode = returncode
+    m.stdout = ""
+    m.stderr = stderr
+    return m
+
 
 class TestRestartContainer:
-    async def test_simulated_returns_message(self):
-        result = await restart_container("payments-api")
+    async def test_success_returns_service_and_id(self):
+        with patch(_DOCKER_PATCH, return_value=_ok_run("abc123")) as mock_run:
+            result = await restart_container("payments-api")
         assert "payments-api" in result
-        assert "SIMULATED" in result
+        assert "abc123" in result
+        # Verify docker was called correctly (no shell, correct command list)
+        mock_run.assert_called_once()
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["docker", "restart", "payments-api"]
+        assert mock_run.call_args.kwargs.get("shell") is not True
 
-    async def test_different_service_names(self):
+    async def test_different_service_names_accepted(self):
         for svc in ("redis", "worker-1", "my-namespace/my-deploy"):
-            result = await restart_container(svc)
+            with patch(_DOCKER_PATCH, return_value=_ok_run()):
+                result = await restart_container(svc)
             assert svc in result
+
+    async def test_docker_failure_raises_runtime_error(self):
+        with patch(_DOCKER_PATCH, return_value=_fail_run("No such container: svc")):
+            with pytest.raises(RuntimeError, match="exited with code"):
+                await restart_container("svc")
+
+    async def test_docker_timeout_raises_runtime_error(self):
+        with patch(_DOCKER_PATCH, side_effect=subprocess.TimeoutExpired(cmd="docker", timeout=30)):
+            with pytest.raises(RuntimeError, match="timed out"):
+                await restart_container("svc")
+
+    async def test_docker_not_found_raises_runtime_error(self):
+        with patch(_DOCKER_PATCH, side_effect=FileNotFoundError):
+            with pytest.raises(RuntimeError, match="not found on PATH"):
+                await restart_container("svc")
+
+    async def test_invalid_service_name_raises_value_error(self):
+        for bad in ("", "-starts-with-dash", "name with spaces", "a" * 300, "svc;rm -rf /"):
+            with pytest.raises(ValueError, match="Invalid service name"):
+                await restart_container(bad)
+
+    async def test_shell_false_by_default(self):
+        """Ensure subprocess.run is never called with shell=True."""
+        with patch(_DOCKER_PATCH, return_value=_ok_run()) as mock_run:
+            await restart_container("safe-svc")
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs.get("shell") is not True
 
 
 # ── router.py — integration ───────────────────────────────────────────────────
@@ -196,6 +251,12 @@ class TestRestartContainer:
 class TestActionRestartEndpoint:
     def _valid_token(self, action="restart", service="payments-api", user_id="u1"):
         return generate_action_token(action, service, user_id)
+
+    @pytest.fixture(autouse=True)
+    def mock_docker(self):
+        """Prevent real Docker calls in router integration tests."""
+        with patch(_DOCKER_PATCH, return_value=_ok_run("abc123")):
+            yield
 
     def test_happy_path(self, client):
         token = self._valid_token()
@@ -325,6 +386,11 @@ class TestBuildActionMessage:
 class TestReplayProtection:
     """Verify that each token can only be successfully used once."""
 
+    @pytest.fixture(autouse=True)
+    def mock_docker(self):
+        with patch(_DOCKER_PATCH, return_value=_ok_run("abc123")):
+            yield
+
     def test_first_use_succeeds(self, client):
         token = generate_action_token("restart", "payments-api", "u1")
         resp = client.get(f"/action/restart?token={token}")
@@ -371,6 +437,11 @@ class TestReplayProtection:
 class TestConfirmEndpoint:
     def _valid_token(self, action="restart", service="payments-api", user_id="u1"):
         return generate_action_token(action, service, user_id)
+
+    @pytest.fixture(autouse=True)
+    def mock_docker(self):
+        with patch(_DOCKER_PATCH, return_value=_ok_run("abc123")):
+            yield
 
     def test_valid_token_returns_html(self, client):
         token = self._valid_token()

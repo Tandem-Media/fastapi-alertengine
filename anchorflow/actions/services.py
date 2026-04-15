@@ -2,52 +2,112 @@
 """
 Infrastructure service handlers for AnchorFlow remote actions.
 
-Phase 1 — simulated mode:
-    All handlers return a descriptive string without touching real
-    infrastructure.  This is intentional: ship the wiring safely first,
-    then swap in the real implementation once it is tested in staging.
+Docker backend (Phase 2):
+    Executes ``docker restart <container>`` in a subprocess so that no
+    external Python packages are required.  The call is run in a thread
+    executor to remain non-blocking inside an async handler.
 
-Future phases (add behind a feature flag or subclass):
-    - Docker: ``docker.DockerClient().containers.get(service).restart()``
-    - Kubernetes: patch the ``Deployment`` via the k8s Python client
-    - SSH: paramiko exec of ``systemctl restart <service>``
+Safety contract
+---------------
+* Service names are validated against ``_SAFE_NAME_RE`` before any
+  subprocess call.  The pattern accepts the characters that are legal in
+  Docker container names and Kubernetes resource names
+  (alphanumerics, ``-``, ``_``, ``.``, ``/``).
+* The command is always passed as a *list* — never via ``shell=True`` —
+  so the validated name cannot be further interpreted by a shell.
+* A hard timeout of ``_DOCKER_TIMEOUT`` seconds prevents the handler
+  from hanging indefinitely when Docker is unresponsive.
+
+Observability
+-------------
+The returned string is written verbatim into the audit-log ``detail``
+field by the router, so every restart attempt produces a structured,
+searchable audit record.
 """
+
+import asyncio
+import re
+import subprocess
+
+# Accepts Docker container names and Kubernetes-style <namespace>/<name>
+# paths.  The leading character must be alphanumeric so that the name
+# cannot start with a dash (which could be misread as a flag).
+_SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,253}$")
+
+# Hard wall-clock timeout for the blocking Docker call.
+_DOCKER_TIMEOUT: int = 30  # seconds
+
+
+def _validate_service_name(service: str) -> None:
+    """Raise ``ValueError`` if *service* contains unsafe characters."""
+    if not _SAFE_NAME_RE.match(service):
+        raise ValueError(
+            f"Invalid service name {service!r}: must match "
+            r"^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,253}$"
+        )
+
+
+def _docker_restart_sync(service: str) -> str:
+    """
+    Blocking helper — call ``docker restart <service>`` and return a
+    human-readable outcome string, raising ``RuntimeError`` on failure.
+
+    This function is intentionally *not* async so that it can be handed
+    to ``run_in_executor`` without a secondary event-loop.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "restart", service],
+            capture_output=True,
+            text=True,
+            timeout=_DOCKER_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"docker restart timed out after {_DOCKER_TIMEOUT}s "
+            f"for container {service!r}"
+        ) from exc
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            "docker binary not found on PATH; ensure Docker is installed "
+            "and accessible to this process"
+        ) from exc
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        raise RuntimeError(
+            f"docker restart exited with code {result.returncode} "
+            f"for container {service!r}: {stderr}"
+        )
+
+    container_id = result.stdout.strip()
+    return f"Restarted {service} (container id: {container_id})"
 
 
 async def restart_container(service: str) -> str:
     """
-    Restart the named service / container.
+    Restart the named Docker container.
 
     Parameters
     ----------
     service:
-        The service or container name to restart.
+        The Docker container name (or Kubernetes-style ``namespace/name``).
 
     Returns
     -------
     str
-        Human-readable outcome message (logged in the audit trail).
+        Human-readable outcome message written into the audit trail.
 
-    Notes
-    -----
-    Currently runs in *simulated* mode: no real infrastructure is touched.
-    Replace the body of the ``# --- real implementation ---`` block to wire
-    in Docker, Kubernetes, or another backend.
+    Raises
+    ------
+    ValueError
+        When *service* contains characters that are not permitted in a
+        container or resource name.
+    RuntimeError
+        When the ``docker`` binary is not found, the command times out,
+        or Docker reports a non-zero exit code.
     """
-    # --- real implementation goes here when ready ---
-    # Example (Docker):
-    #   import docker
-    #   client = docker.from_env()
-    #   client.containers.get(service).restart()
-    #
-    # Example (Kubernetes):
-    #   from kubernetes import client as k8s_client, config as k8s_config
-    #   k8s_config.load_incluster_config()
-    #   apps = k8s_client.AppsV1Api()
-    #   apps.patch_namespaced_deployment(
-    #       name=service, namespace="default",
-    #       body={"spec": {"template": {"metadata": {"annotations": {"restartedAt": ...}}}}}
-    #   )
-    # ------------------------------------------------
+    _validate_service_name(service)
 
-    return f"[SIMULATED] Restarted {service}"
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _docker_restart_sync, service)
