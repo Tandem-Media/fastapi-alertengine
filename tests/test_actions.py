@@ -1,6 +1,6 @@
 # tests/test_actions.py
 """
-Tests for the AnchorFlow remote-action system.
+Tests for the fastapi_alertengine remote-action system.
 
 Covers:
   - JWT generation and verification (tokens.py)
