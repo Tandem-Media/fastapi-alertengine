@@ -61,6 +61,7 @@ def _docker_restart_sync(service: str) -> str:
             capture_output=True,
             text=True,
             timeout=_DOCKER_TIMEOUT,
+            check=False,  # we inspect returncode ourselves below
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(

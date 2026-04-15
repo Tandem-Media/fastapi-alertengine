@@ -237,6 +237,15 @@ class TestRestartContainer:
             with pytest.raises(ValueError, match="Invalid service name"):
                 await restart_container(bad)
 
+    async def test_valid_service_name_at_max_length_accepted(self):
+        # 254-character name: 1 leading alphanum + 253 valid chars = right at the boundary
+        long_name = "a" + "b" * 253
+        assert len(long_name) == 254
+        with patch(_DOCKER_PATCH, return_value=_ok_run()) as mock_run:
+            result = await restart_container(long_name)
+        assert long_name in result
+        mock_run.assert_called_once()
+
     async def test_shell_false_by_default(self):
         """Ensure subprocess.run is never called with shell=True."""
         with patch(_DOCKER_PATCH, return_value=_ok_run()) as mock_run:
