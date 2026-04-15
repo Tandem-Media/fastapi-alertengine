@@ -208,8 +208,12 @@ class TestActionRestartEndpoint:
 
     def test_invalid_signature_returns_403(self, client):
         bad_token = jwt.encode(
-            {"action": "restart", "service": "svc", "user_id": "u1",
-             "exp": int(time.time()) + 90},
+            {
+                "action": "restart",
+                "service": "svc",
+                "user_id": "u1",
+                "exp": int(time.time()) + 90,
+            },
             "wrong-secret",
             algorithm=_ALGORITHM,
         )
@@ -286,7 +290,9 @@ class TestBuildActionMessage:
     def test_base_url_from_env(self, monkeypatch):
         monkeypatch.setenv("BASE_URL", "https://env-base.example.com")
         msg = build_action_message("restart", "svc", "u1")
-        assert msg.signed_url.startswith("https://env-base.example.com")
+        # Verify the env-var base URL is honoured as a prefix of the path component
+        expected_prefix = "https://env-base.example.com/action/"
+        assert msg.signed_url.startswith(expected_prefix)
 
     def test_base_url_trailing_slash_stripped(self):
         msg = build_action_message("restart", "svc", "u1", base_url="https://x.io/")
