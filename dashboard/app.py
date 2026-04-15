@@ -542,7 +542,7 @@ st.markdown(
     f'<div>'
     f'  <div class="ae-summary-status {_sum_cls}">{_sum_label}</div>'
     f'  <div class="ae-summary-meta">'
-    f'    P95 {h_p95:.0f} ms &nbsp;·&nbsp; Error rate {err_pct:.1f}% '
+    f'    P95 {h_p95:.0f} ms &nbsp;·&nbsp; Error rate {err_pct:.1f}%'
     f'    &nbsp;·&nbsp; Health {h_score}/100 &nbsp;·&nbsp; {h_n} samples'
     f'  </div>'
     f'</div>'
