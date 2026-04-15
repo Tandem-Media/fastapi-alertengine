@@ -37,6 +37,14 @@ TIME_RANGES: Dict[str, int] = {
     "24 hours": 1440,
 }
 
+# ── Incident thresholds (heuristic constants) ─────────────────────────────────
+# Used in build_incident_timeline, build_root_cause, and generate_insights.
+_LATENCY_WARN_MS: float = 500.0    # warning threshold for P95 latency
+_LATENCY_CRIT_MS: float = 1000.0   # critical threshold for P95 latency
+_ERR_WARN: float = 0.05            # 5% — warning threshold for error rate
+_ERR_CRIT: float = 0.10            # 10% — critical threshold for error rate
+_TRAFFIC_CHANGE_PCT: float = 30.0  # ±30% req/min swing triggers TRAFFIC_CHANGE
+
 # ── Page setup ────────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -214,6 +222,69 @@ st.markdown(
     margin-bottom: 0.6rem;
     font-size: 0.84rem;
     color: #c9d1d9;
+}
+
+/* ─── incident timeline ─── */
+.ae-timeline-event {
+    border-left: 3px solid #30363d;
+    padding: 0.4rem 0.8rem;
+    margin-bottom: 0.4rem;
+    background: #0d1117;
+    border-radius: 0 6px 6px 0;
+}
+.ae-timeline-ts {
+    font-size: 0.74rem;
+    color: #8b949e;
+    font-family: monospace;
+    margin-right: 0.5rem;
+}
+.ae-timeline-type {
+    font-size: 0.71rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 0.4rem;
+}
+.ae-timeline-msg {
+    font-size: 0.85rem;
+    color: #c9d1d9;
+    margin-top: 0.1rem;
+}
+.ae-timeline-empty {
+    color: #8b949e;
+    font-size: 0.85rem;
+    padding: 0.4rem 0;
+}
+
+/* ─── root cause card ─── */
+.ae-rootcause-box {
+    background: #12181f;
+    border: 1px solid #30363d;
+    border-left: 4px solid #e3b341;
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.6rem;
+}
+.ae-rootcause-label {
+    font-size: 0.70rem;
+    font-weight: 700;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.3rem;
+}
+.ae-rootcause-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #c9d1d9;
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
+.ae-rootcause-meta {
+    color: #8b949e;
+    font-size: 0.80rem;
+    line-height: 1.7;
 }
 </style>
 """,
@@ -394,14 +465,232 @@ def generate_insights(p95: float, error_rate: float, ep_df: pd.DataFrame) -> Lis
 def _action_hint(ep_df: pd.DataFrame, p95: float, error_rate: float) -> str:
     """Return a single actionable investigation hint."""
     if ep_df is not None and not ep_df.empty:
-        if p95 > 1000:
+        if p95 > _LATENCY_CRIT_MS:
             top = ep_df.iloc[0]
             return f"👉 Investigate <code>{top['path']}</code> for performance degradation"
-        high_err = ep_df[ep_df["error_rate_pct"] > 5]
+        high_err = ep_df[ep_df["error_rate_pct"] > _ERR_WARN * 100]
         if not high_err.empty:
             worst = high_err.iloc[0]
             return f"👉 Check <code>{worst['path']}</code> — {worst['error_rate_pct']:.1f}% error rate"
     return "✅ System healthy — no immediate action required"
+
+
+def build_incident_timeline(
+    ts_df: pd.DataFrame,
+    ep_df: pd.DataFrame,
+    health: Optional[Dict],
+) -> List[Dict[str, Any]]:
+    """
+    Reconstruct a causal sequence of system degradation events from metrics.
+
+    Each returned dict is a TimelineEvent with keys:
+        timestamp, event_type, severity, message
+
+    Events are ordered chronologically; ALERT_TRIGGERED is always last.
+    """
+    if health is None:
+        return []
+
+    h_met = health.get("metrics", {})
+    p95 = float(h_met.get("overall_p95_ms", 0.0))
+    error_rate = float(h_met.get("error_rate", 0.0))
+    error_rate_pct = error_rate * 100
+    status = health.get("status", "unknown")
+
+    # Derive a base timestamp for simulated ordering.
+    base_ts: Optional[Any] = None
+    if not ts_df.empty and "ts" in ts_df.columns:
+        base_ts = ts_df["ts"].iloc[-1]
+
+    def _ts_label(offset_min: int) -> str:
+        if base_ts is not None:
+            t = base_ts - pd.Timedelta(minutes=offset_min)
+            return t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)
+        return f"T-{offset_min}m" if offset_min > 0 else "now"
+
+    events: List[Dict[str, Any]] = []
+
+    # ── TRAFFIC_CHANGE (earliest signal) ──────────────────────────────────────
+    if not ts_df.empty and len(ts_df) > 1:
+        latest = ts_df.iloc[-1]
+        prev = ts_df.iloc[-2]
+        prev_req = float(prev["total_requests"]) if float(prev["total_requests"]) != 0 else 1.0
+        delta_pct = (float(latest["total_requests"]) - prev_req) / prev_req * 100
+        if abs(delta_pct) > _TRAFFIC_CHANGE_PCT:
+            events.append(
+                {
+                    "timestamp": _ts_label(4),
+                    "event_type": "TRAFFIC_CHANGE",
+                    "severity": "info",
+                    "message": f"Traffic change detected: {delta_pct:+.1f}%",
+                }
+            )
+
+    # ── LATENCY_SPIKE ─────────────────────────────────────────────────────────
+    if p95 > _LATENCY_CRIT_MS:
+        events.append(
+            {
+                "timestamp": _ts_label(3),
+                "event_type": "LATENCY_SPIKE",
+                "severity": "critical",
+                "message": f"P95 latency exceeded {p95:.0f}ms",
+            }
+        )
+    elif p95 > _LATENCY_WARN_MS:
+        events.append(
+            {
+                "timestamp": _ts_label(3),
+                "event_type": "LATENCY_SPIKE",
+                "severity": "warning",
+                "message": f"P95 latency exceeded {p95:.0f}ms",
+            }
+        )
+
+    # ── ERROR_SPIKE ───────────────────────────────────────────────────────────
+    if error_rate_pct > _ERR_CRIT * 100:
+        events.append(
+            {
+                "timestamp": _ts_label(2),
+                "event_type": "ERROR_SPIKE",
+                "severity": "critical",
+                "message": f"Error rate spiked to {error_rate_pct:.1f}%",
+            }
+        )
+    elif error_rate_pct > _ERR_WARN * 100:
+        events.append(
+            {
+                "timestamp": _ts_label(2),
+                "event_type": "ERROR_SPIKE",
+                "severity": "warning",
+                "message": f"Error rate spiked to {error_rate_pct:.1f}%",
+            }
+        )
+
+    # ── ENDPOINT_DEGRADATION (top-25% by impact_score, up to 3) ──────────────
+    if ep_df is not None and not ep_df.empty:
+        p75 = ep_df["impact_score"].quantile(0.75)
+        top_degraded = ep_df[ep_df["impact_score"] >= p75].head(3)
+        for _, row in top_degraded.iterrows():
+            sev = (
+                "critical"
+                if row["error_rate_pct"] > 10 or row["avg_latency_ms"] > 1000
+                else "warning"
+            )
+            events.append(
+                {
+                    "timestamp": _ts_label(1),
+                    "event_type": "ENDPOINT_DEGRADATION",
+                    "severity": sev,
+                    "message": (
+                        f"Endpoint {row['path']} showing degradation "
+                        f"(latency {row['avg_latency_ms']:.0f}ms, "
+                        f"error {row['error_rate_pct']:.1f}%)"
+                    ),
+                }
+            )
+
+    # ── ALERT_TRIGGERED (always last, only when alerting) ────────────────────
+    if status in ("warning", "critical"):
+        events.append(
+            {
+                "timestamp": _ts_label(0),
+                "event_type": "ALERT_TRIGGERED",
+                "severity": "critical",
+                "message": f"Alert triggered: system entered {status} state",
+            }
+        )
+
+    return events
+
+
+def build_root_cause(
+    ep_df: pd.DataFrame,
+    health: Optional[Dict],
+) -> Dict[str, str]:
+    """
+    Apply heuristic rules to identify the primary root cause hypothesis.
+
+    Rules are evaluated in the following order (first match wins):
+        1. Combined failure  — error_rate >= 5% AND p95 >= 1000ms → "Very High"
+        2. Error dominant    — error_rate >= 5%                    → "High"
+        3. Latency dominant  — p95 >= 1000ms AND error_rate < 5%  → "High"
+        4. Default / stable  — no threshold breached               → "Low"
+
+    The combined rule is checked before the error-only rule because it is a
+    strict superset and produces a more accurate classification.
+
+    Returns a dict with keys: root_cause, service, signal, confidence.
+    """
+    if health is None:
+        return {
+            "root_cause": "No data — backend unreachable",
+            "service": "unknown",
+            "signal": "None",
+            "confidence": "None",
+        }
+
+    h_met = health.get("metrics", {})
+    p95 = float(h_met.get("overall_p95_ms", 0.0))
+    error_rate = float(h_met.get("error_rate", 0.0))
+    error_rate_pct = error_rate * 100
+    svc = health.get("service_name", "unknown")
+
+    has_errors = error_rate >= _ERR_WARN
+    has_latency = p95 >= _LATENCY_CRIT_MS
+
+    def _top_by(col: str) -> Optional[Any]:
+        if ep_df is not None and not ep_df.empty:
+            return ep_df.sort_values(col, ascending=False).iloc[0]
+        return None
+
+    # Rule 3 — Combined failure (checked first: most specific)
+    if has_errors and has_latency:
+        row = _top_by("impact_score")
+        endpoint = row["path"] if row is not None else "unknown endpoint"
+        return {
+            "root_cause": (
+                f"{endpoint} contributing to combined latency and error degradation"
+            ),
+            "service": svc,
+            "signal": "Multi-factor failure (latency + errors)",
+            "confidence": "Very High",
+        }
+
+    # Rule 1 — Error dominant
+    if has_errors:
+        row = _top_by("error_rate_pct")
+        if row is not None:
+            endpoint, rate = row["path"], float(row["error_rate_pct"])
+        else:
+            endpoint, rate = "unknown endpoint", error_rate_pct
+        return {
+            "root_cause": f"{endpoint} showing elevated error rate ({rate:.1f}%)",
+            "service": svc,
+            "signal": "Error rate breach",
+            "confidence": "High",
+        }
+
+    # Rule 2 — Latency dominant
+    if has_latency:
+        row = _top_by("avg_latency_ms")
+        if row is not None:
+            endpoint, ms = row["path"], float(row["avg_latency_ms"])
+        else:
+            endpoint, ms = "unknown endpoint", p95
+        return {
+            "root_cause": f"{endpoint} exhibiting high latency ({ms:.0f}ms)",
+            "service": svc,
+            "signal": "Latency degradation",
+            "confidence": "High",
+        }
+
+    # Rule 4 — Default / stable
+    return {
+        "root_cause": "No dominant failing endpoint detected",
+        "service": svc,
+        "signal": "System stable or noise-level variance",
+        "confidence": "Low",
+    }
 
 
 # ── Chart theme ───────────────────────────────────────────────────────────────
@@ -589,6 +878,68 @@ with hint_col:
         )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1b · INCIDENT TIMELINE  +  ROOT CAUSE
+# Placed above the Active Incident card as the storytelling entry point.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_timeline_events = build_incident_timeline(ts_df, ep_df, health)
+_root_cause = build_root_cause(ep_df, health)
+
+# Only render the section when there is something meaningful to show.
+if _timeline_events or (health and h_status in ("warning", "critical")):
+    st.markdown('<div class="ae-section">Incident Timeline</div>', unsafe_allow_html=True)
+
+    tl_col, rc_col = st.columns([3, 2])
+
+    # ── Timeline events ───────────────────────────────────────────────────────
+    with tl_col:
+        _SEV_COLOR = {"info": "#58a6ff", "warning": "#e3b341", "critical": "#f85149"}
+        _SEV_ICON  = {"info": "ℹ️",      "warning": "⚠️",      "critical": "🔴"}
+        if _timeline_events:
+            for _ev in _timeline_events:
+                _sev   = _ev.get("severity", "info")
+                _color = _SEV_COLOR.get(_sev, "#8b949e")
+                _icon  = _SEV_ICON.get(_sev, "·")
+                st.markdown(
+                    f'<div class="ae-timeline-event" style="border-left-color:{_color}">'
+                    f'  <span class="ae-timeline-ts">{_ev.get("timestamp", "—")}</span>'
+                    f'  <span class="ae-timeline-type" style="color:{_color}">'
+                    f'    {_ev.get("event_type", "")}'
+                    f'  </span>'
+                    f'  <div class="ae-timeline-msg">{_icon} {_ev.get("message", "")}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="ae-timeline-empty">✅ No incident events detected in the current window.</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Root cause ────────────────────────────────────────────────────────────
+    with rc_col:
+        st.markdown('<div class="ae-section">Root Cause</div>', unsafe_allow_html=True)
+        _conf_color = {
+            "Very High": "#f85149",
+            "High":      "#e3b341",
+            "Low":       "#3fb950",
+            "None":      "#8b949e",
+        }.get(_root_cause.get("confidence", "Low"), "#8b949e")
+        st.markdown(
+            f'<div class="ae-rootcause-box">'
+            f'  <div class="ae-rootcause-label">Likely Root Cause</div>'
+            f'  <div class="ae-rootcause-value">{_root_cause["root_cause"]}</div>'
+            f'  <div class="ae-rootcause-meta">'
+            f'    <strong>Affected Service:</strong> {_root_cause["service"]}<br>'
+            f'    <strong>Primary Signal:</strong> {_root_cause["signal"]}<br>'
+            f'    <strong>Confidence:</strong>'
+            f'    <span style="color:{_conf_color}">&nbsp;{_root_cause["confidence"]}</span>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SECTION 2 · ACTIVE INCIDENT CARD  (reworked from "Alert Status")
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -684,6 +1035,73 @@ with inc_right:
     st.markdown(card("Error Rate",    f"{err_pct:.1f}%",    err_cls),  unsafe_allow_html=True)
     st.markdown(card("Health Score",  f"{h_score} / 100",   score_cls), unsafe_allow_html=True)
     st.markdown(card("Req / Min",     str(rpm),              "c-blue"), unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2b · INCIDENT RESPONSE CONTROLS
+# Only rendered when system is degraded — gives the SRE direct action options.
+# ─────────────────────────────────────────────────────────────────────────────
+
+if h_status in ("warning", "critical"):
+    st.markdown('<div class="ae-section">Incident Response</div>', unsafe_allow_html=True)
+
+    ctrl_c1, ctrl_c2, ctrl_c3 = st.columns(3)
+
+    # ── Restart Service ───────────────────────────────────────────────────────
+    with ctrl_c1:
+        if st.button("🔁 Restart Service", use_container_width=True, key="btn_restart"):
+            if actions_enabled:
+                st.info(
+                    f"To restart **{h_svc or service}**, call the actions endpoint with a "
+                    f"signed token:\n\n"
+                    f"```\nGET {BASE_URL}/action/restart?token=<signed-jwt>\n```\n\n"
+                    f"Generate a token via your backend and visit "
+                    f"`{BASE_URL}/action/confirm?token=<jwt>` to confirm."
+                )
+            else:
+                st.warning(
+                    "Action support is not enabled on this backend.\n\n"
+                    "To activate, mount the actions router:\n"
+                    "```python\n"
+                    "from fastapi_alertengine import actions_router\n"
+                    "app.include_router(actions_router)\n"
+                    "```"
+                )
+
+    # ── Silence (session-scoped) ──────────────────────────────────────────────
+    with ctrl_c2:
+        _silenced = st.session_state.get("incident_silenced", False)
+        _btn_label = "🔔 Unsilence" if _silenced else "🔕 Silence (this session)"
+        if st.button(_btn_label, use_container_width=True, key="btn_silence"):
+            st.session_state["incident_silenced"] = not _silenced
+            if not _silenced:
+                st.success("Incident alerts silenced for this browser session.")
+            else:
+                st.info("Incident alerts re-enabled.")
+
+    # ── Copy Incident Summary ─────────────────────────────────────────────────
+    with ctrl_c3:
+        if st.button("📋 Copy Incident Summary", use_container_width=True, key="btn_copy"):
+            _summary_lines = [
+                f"Incident Summary — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"Service:      {h_svc or service}",
+                f"Status:       {h_status.upper()}",
+                f"P95 Latency:  {h_p95:.0f} ms",
+                f"Error Rate:   {err_pct:.1f}%",
+                f"Health Score: {h_score}/100",
+                "",
+                f"Root Cause:   {_root_cause['root_cause']}",
+                f"Signal:       {_root_cause['signal']}",
+                f"Confidence:   {_root_cause['confidence']}",
+            ]
+            if _timeline_events:
+                _summary_lines.append("")
+                _summary_lines.append("Timeline:")
+                for _ev in _timeline_events:
+                    _summary_lines.append(
+                        f"  {_ev.get('timestamp','—')}  [{_ev.get('event_type','')}]  "
+                        f"{_ev.get('message','')}"
+                    )
+            st.code("\n".join(_summary_lines), language="text")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SECTION 3 · TOP SIGNALS  +  WHAT CHANGED
