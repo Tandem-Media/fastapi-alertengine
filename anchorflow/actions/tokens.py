@@ -17,6 +17,7 @@ Usage::
 import os
 import time
 from typing import Any
+from uuid import uuid4
 
 import jwt
 
@@ -58,6 +59,7 @@ def generate_action_token(action: str, service: str, user_id: str) -> str:
     """
     now = int(time.time())
     payload: dict[str, Any] = {
+        "jti": str(uuid4()),
         "action": action,
         "service": service,
         "user_id": user_id,

@@ -22,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from anchorflow.actions.audit import log_action
+from anchorflow.actions.replay import _reset as reset_replay_store
 from anchorflow.actions.router import router as actions_router
 from anchorflow.actions.services import restart_container
 from anchorflow.actions.tokens import (
@@ -41,6 +42,14 @@ _SECRET = "test-secret-key-for-pytest"
 def set_secret(monkeypatch):
     """Inject ACTION_SECRET_KEY for every test in this module."""
     monkeypatch.setenv("ACTION_SECRET_KEY", _SECRET)
+
+
+@pytest.fixture(autouse=True)
+def clear_replay_store():
+    """Reset the in-memory JTI store before each test to prevent pollution."""
+    reset_replay_store()
+    yield
+    reset_replay_store()
 
 
 @pytest.fixture()
@@ -66,6 +75,9 @@ class TestGenerateActionToken:
         assert payload["user_id"] == "user-42"
         assert "exp" in payload
         assert "iat" in payload
+        assert "jti" in payload
+        # jti must be a non-empty string (UUID4)
+        assert isinstance(payload["jti"], str) and len(payload["jti"]) > 0
 
     def test_expiry_within_window(self):
         before = int(time.time())
@@ -272,7 +284,7 @@ class TestBuildActionMessage:
     def test_returns_all_fields(self):
         msg = build_action_message("restart", "payments-api", "u1", base_url="https://example.com")
         assert msg.token
-        assert msg.signed_url.startswith("https://example.com/action/restart?token=")
+        assert msg.signed_url.startswith("https://example.com/action/confirm?token=")
         assert "restart" in msg.body
         assert "payments-api" in msg.body
 
@@ -291,7 +303,7 @@ class TestBuildActionMessage:
         monkeypatch.setenv("BASE_URL", "https://env-base.example.com")
         msg = build_action_message("restart", "svc", "u1")
         # Verify the env-var base URL is honoured as a prefix of the path component
-        expected_prefix = "https://env-base.example.com/action/"
+        expected_prefix = "https://env-base.example.com/action/confirm"
         assert msg.signed_url.startswith(expected_prefix)
 
     def test_base_url_trailing_slash_stripped(self):
@@ -301,3 +313,115 @@ class TestBuildActionMessage:
     def test_body_contains_expiry_notice(self):
         msg = build_action_message("restart", "svc", "u1", base_url="https://x.io")
         assert "90 seconds" in msg.body or "expire" in msg.body.lower()
+
+    def test_signed_url_routes_through_confirm(self):
+        msg = build_action_message("restart", "svc", "u1", base_url="https://x.io")
+        assert "/action/confirm?" in msg.signed_url
+
+
+# ── replay.py ─────────────────────────────────────────────────────────────────
+
+
+class TestReplayProtection:
+    """Verify that each token can only be successfully used once."""
+
+    def test_first_use_succeeds(self, client):
+        token = generate_action_token("restart", "payments-api", "u1")
+        resp = client.get(f"/action/restart?token={token}")
+        assert resp.status_code == 200
+
+    def test_second_use_of_same_token_returns_403(self, client):
+        token = generate_action_token("restart", "payments-api", "u1")
+        first = client.get(f"/action/restart?token={token}")
+        assert first.status_code == 200
+        second = client.get(f"/action/restart?token={token}")
+        assert second.status_code == 403
+        assert "already been used" in second.json()["detail"]
+
+    def test_different_tokens_do_not_interfere(self, client):
+        token_a = generate_action_token("restart", "svc-a", "u1")
+        token_b = generate_action_token("restart", "svc-b", "u1")
+        assert client.get(f"/action/restart?token={token_a}").status_code == 200
+        assert client.get(f"/action/restart?token={token_b}").status_code == 200
+
+    def test_token_without_jti_returns_400(self, client):
+        # Manually craft a token with no jti
+        payload = {
+            "action": "restart",
+            "service": "svc",
+            "user_id": "u1",
+            "exp": int(time.time()) + 90,
+        }
+        token = jwt.encode(payload, _SECRET, algorithm=_ALGORITHM)
+        resp = client.get(f"/action/restart?token={token}")
+        assert resp.status_code == 400
+        assert "jti" in resp.json()["detail"].lower()
+
+    def test_replay_store_cleared_between_tests(self, client):
+        # A token used in a *previous* test should not block this one
+        # because clear_replay_store resets the store before each test.
+        token = generate_action_token("restart", "payments-api", "u1")
+        resp = client.get(f"/action/restart?token={token}")
+        assert resp.status_code == 200
+
+
+# ── /action/confirm endpoint ──────────────────────────────────────────────────
+
+
+class TestConfirmEndpoint:
+    def _valid_token(self, action="restart", service="payments-api", user_id="u1"):
+        return generate_action_token(action, service, user_id)
+
+    def test_valid_token_returns_html(self, client):
+        token = self._valid_token()
+        resp = client.get(f"/action/confirm?token={token}")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers["content-type"]
+
+    def test_confirm_page_contains_action_and_service(self, client):
+        token = self._valid_token(action="restart", service="payments-api")
+        resp = client.get(f"/action/confirm?token={token}")
+        body = resp.text
+        assert "restart" in body
+        assert "payments-api" in body
+
+    def test_confirm_page_has_form_with_token(self, client):
+        token = self._valid_token()
+        resp = client.get(f"/action/confirm?token={token}")
+        assert f'value="{token}"' in resp.text
+
+    def test_expired_token_returns_403_html(self, client):
+        payload = {
+            "action": "restart",
+            "service": "svc",
+            "user_id": "u1",
+            "jti": "some-id",
+            "iat": int(time.time()) - 200,
+            "exp": int(time.time()) - 100,
+        }
+        token = jwt.encode(payload, _SECRET, algorithm=_ALGORITHM)
+        resp = client.get(f"/action/confirm?token={token}")
+        assert resp.status_code == 403
+
+    def test_invalid_token_returns_403_html(self, client):
+        resp = client.get("/action/confirm?token=notavalidtoken")
+        assert resp.status_code == 403
+
+    def test_confirm_does_not_consume_token(self, client):
+        """Viewing the confirm page must NOT mark the token as used."""
+        token = self._valid_token()
+        # Visit confirm page
+        confirm_resp = client.get(f"/action/confirm?token={token}")
+        assert confirm_resp.status_code == 200
+        # Token must still be usable for the actual execution
+        exec_resp = client.get(f"/action/restart?token={token}")
+        assert exec_resp.status_code == 200
+
+    def test_restart_still_blocked_after_execution(self, client):
+        """After executing via /action/restart, reusing the token is blocked."""
+        token = self._valid_token()
+        client.get(f"/action/restart?token={token}")  # consume
+        # Viewing confirm with a used token is allowed (page shows, no action taken)
+        # but executing again must fail
+        second_exec = client.get(f"/action/restart?token={token}")
+        assert second_exec.status_code == 403

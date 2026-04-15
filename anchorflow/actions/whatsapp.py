@@ -13,8 +13,9 @@ Typical flow
 2.  The function generates a short-lived JWT and constructs a signed URL.
 3.  The signed URL is sent to the target user via their preferred WhatsApp
     Business API client (Twilio, 360dialog, Meta Cloud API, etc.).
-4.  The user taps the link; the FastAPI endpoint verifies the token and
-    executes the action.
+4.  The user taps the link; the FastAPI ``/action/confirm`` endpoint shows a
+    confirmation page.  Clicking "Confirm" calls ``/action/restart`` which
+    verifies the token and executes the action.
 
 Configuration
 -------------
@@ -99,7 +100,7 @@ def build_action_message(
     ).rstrip("/")
 
     token = generate_action_token(action, service, user_id)
-    signed_url = f"{resolved_base}/action/{action}?token={token}"
+    signed_url = f"{resolved_base}/action/confirm?token={token}"
 
     body = (
         f"AnchorFlow alert: action *{action}* requested for service *{service}*.\n"
