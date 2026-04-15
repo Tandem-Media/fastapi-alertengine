@@ -28,6 +28,9 @@ dev = [
   "fakeredis",
   "anyio",
 ]
+notifications = [
+  "twilio>=9.10.5",
+]
 
 [project.urls]
 Homepage = "https://github.com/Tandem-Media/fastapi-alertengine"
