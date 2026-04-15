@@ -1,4 +1,5 @@
 # fastapi_alertengine/middleware.py
+import os
 import time
 from typing import Callable
 from fastapi import Request
@@ -51,8 +52,7 @@ class RequestMetricsMiddleware(BaseHTTPMiddleware):
                 print(f"  Latency: {latency_ms:.1f}ms")
                 print(f"  Status:  {status_code}")
                 # Progressive hint if actions router is not mounted
-                import os as _os
-                if not _os.getenv("ACTION_SECRET_KEY"):
+                if not os.getenv("ACTION_SECRET_KEY"):
                     print(f"\n💡 Tip: Enable incident actions:")
                     print(f"   from fastapi_alertengine import actions_router")
                     print(f"   app.include_router(actions_router)")
