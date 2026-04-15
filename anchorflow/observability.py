@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 # ── Sensible threshold defaults ────────────────────────────────────────────────
 _P95_WARNING_MS = 1_000.0
 _P95_CRITICAL_MS = 3_000.0
-# Expressed as fractions (0-1); converted to percent for AlertConfig
-_ERROR_RATE_WARNING = 0.05
-_ERROR_RATE_CRITICAL = 0.15
+# Stored as percentages (0-100) to match AlertConfig.error_rate_*_pct fields
+_ERROR_RATE_WARNING_PCT = 5.0
+_ERROR_RATE_CRITICAL_PCT = 15.0
 
 
 def setup_observability(app: FastAPI) -> None:
@@ -69,8 +69,8 @@ def setup_observability(app: FastAPI) -> None:
         instance_id=instance,
         p95_warning_ms=_P95_WARNING_MS,
         p95_critical_ms=_P95_CRITICAL_MS,
-        error_rate_warning_pct=_ERROR_RATE_WARNING * 100,
-        error_rate_critical_pct=_ERROR_RATE_CRITICAL * 100,
+        error_rate_warning_pct=_ERROR_RATE_WARNING_PCT,
+        error_rate_critical_pct=_ERROR_RATE_CRITICAL_PCT,
         slack_webhook_url=slack_webhook_url,
     )
 
