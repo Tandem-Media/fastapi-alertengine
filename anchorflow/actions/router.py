@@ -25,6 +25,7 @@ Security
 """
 
 import logging
+from html import escape as html_escape
 
 import jwt
 from fastapi import APIRouter, HTTPException, Query
@@ -82,6 +83,11 @@ async def confirm_action(
     action = payload.get("action", "")
     service = payload.get("service", "")
 
+    # Escape all user-controlled values before embedding in HTML.
+    safe_action = html_escape(action)
+    safe_service = html_escape(service)
+    safe_token = html_escape(token)
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -91,11 +97,11 @@ async def confirm_action(
 </head>
 <body>
   <h2>Confirm Infrastructure Action</h2>
-  <p>Action: <strong>{action}</strong></p>
-  <p>Service: <strong>{service}</strong></p>
-  <form method="get" action="/action/{action}">
-    <input type="hidden" name="token" value="{token}">
-    <button type="submit">Confirm {action}</button>
+  <p>Action: <strong>{safe_action}</strong></p>
+  <p>Service: <strong>{safe_service}</strong></p>
+  <form method="get" action="/action/{safe_action}">
+    <input type="hidden" name="token" value="{safe_token}">
+    <button type="submit">Confirm {safe_action}</button>
   </form>
 </body>
 </html>"""

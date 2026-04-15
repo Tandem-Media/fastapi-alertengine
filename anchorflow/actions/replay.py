@@ -29,8 +29,9 @@ because the lock is held only for fast dict operations (no I/O).
 import time
 from threading import Lock
 
-# Matches the token TTL in tokens.py so that used-JTI records are never
-# evicted before the corresponding JWT could theoretically expire.
+# Set to 120 s — intentionally longer than the token TTL (90 s in tokens.py)
+# so that JTI records are never evicted before the corresponding JWT could
+# theoretically expire, preventing any replay window at the boundary.
 TTL: int = 120  # seconds
 
 _used_tokens: dict[str, float] = {}
