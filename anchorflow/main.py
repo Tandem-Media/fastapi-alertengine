@@ -8,6 +8,7 @@ Run:
 
 from fastapi import FastAPI
 
+from anchorflow.actions.router import router as actions_router
 from anchorflow.observability import setup_observability
 
 app = FastAPI(
@@ -16,6 +17,7 @@ app = FastAPI(
 )
 
 setup_observability(app)
+app.include_router(actions_router)
 
 
 @app.get("/health", tags=["health"])

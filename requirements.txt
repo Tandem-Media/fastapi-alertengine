@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 redis-py
 fastapi-alertengine>=1.2.0
+PyJWT>=2.0.0
