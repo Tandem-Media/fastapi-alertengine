@@ -37,6 +37,14 @@ TIME_RANGES: Dict[str, int] = {
     "24 hours": 1440,
 }
 
+# ── Incident thresholds (heuristic constants) ─────────────────────────────────
+# Used in build_incident_timeline, build_root_cause, and generate_insights.
+_LATENCY_WARN_MS: float = 500.0    # warning threshold for P95 latency
+_LATENCY_CRIT_MS: float = 1000.0   # critical threshold for P95 latency
+_ERR_WARN: float = 0.05            # 5% — warning threshold for error rate
+_ERR_CRIT: float = 0.10            # 10% — critical threshold for error rate
+_TRAFFIC_CHANGE_PCT: float = 30.0  # ±30% req/min swing triggers TRAFFIC_CHANGE
+
 # ── Page setup ────────────────────────────────────────────────────────────────
 
 st.set_page_config(
@@ -114,6 +122,170 @@ st.markdown(
 .ae-alert-title { font-weight: 700; font-size: 0.95rem; }
 .ae-alert-meta  { color: #8b949e; font-size: 0.78rem; margin-top: 0.15rem; }
 .ae-alert-body  { color: #c9d1d9; font-size: 0.85rem; margin-top: 0.25rem; }
+
+/* ─── system intelligence ─── */
+.ae-intelligence-box {
+    background: #0f1923;
+    border: 1px solid #1f4068;
+    border-radius: 10px;
+    padding: 1rem 1.3rem;
+    margin-bottom: 0.8rem;
+}
+.ae-insight-item {
+    color: #c9d1d9;
+    font-size: 0.88rem;
+    padding: 0.25rem 0;
+    line-height: 1.5;
+}
+
+/* ─── system summary card ─── */
+.ae-summary-card {
+    background: linear-gradient(135deg, #161b22 0%, #0f1923 100%);
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+}
+.ae-summary-status {
+    font-size: 1.45rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+.ae-summary-meta {
+    color: #8b949e;
+    font-size: 0.80rem;
+    margin-top: 0.2rem;
+}
+.ae-summary-pill {
+    display: inline-block;
+    background: #21262d;
+    border-radius: 999px;
+    padding: 0.15rem 0.7rem;
+    font-size: 0.78rem;
+    margin-right: 0.4rem;
+    color: #c9d1d9;
+}
+
+/* ─── active incident card ─── */
+.ae-incident-card {
+    border-radius: 10px;
+    padding: 1rem 1.3rem;
+    margin-bottom: 0.6rem;
+    background: #0d1117;
+}
+.ae-incident-ok       { border-left: 5px solid #3fb950; }
+.ae-incident-warning  { border-left: 5px solid #e3b341; }
+.ae-incident-critical { border-left: 5px solid #f85149; }
+.ae-incident-unknown  { border-left: 5px solid #8b949e; }
+.ae-incident-title    { font-weight: 700; font-size: 1.0rem; }
+.ae-incident-service  { color: #58a6ff; font-size: 0.82rem; margin-top: 0.2rem; }
+.ae-incident-meta     { color: #8b949e; font-size: 0.78rem; margin-top: 0.15rem; }
+.ae-incident-body     { color: #c9d1d9; font-size: 0.85rem; margin-top: 0.4rem; line-height: 1.6; }
+
+/* ─── top signals ─── */
+.ae-signal-item {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 0.55rem 1rem;
+    margin-bottom: 0.35rem;
+    font-size: 0.85rem;
+    color: #c9d1d9;
+}
+.ae-signal-path { font-weight: 600; color: #58a6ff; }
+
+/* ─── delta / what changed ─── */
+.ae-delta-box {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 0.65rem 1.1rem;
+    margin-bottom: 0.8rem;
+    font-size: 0.85rem;
+    color: #c9d1d9;
+}
+.ae-delta-up   { color: #f85149; }
+.ae-delta-down { color: #3fb950; }
+.ae-delta-flat { color: #8b949e; }
+
+/* ─── action hints ─── */
+.ae-hint-box {
+    background: #0f1923;
+    border: 1px solid #1f4068;
+    border-left: 4px solid #58a6ff;
+    border-radius: 8px;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.84rem;
+    color: #c9d1d9;
+}
+
+/* ─── incident timeline ─── */
+.ae-timeline-event {
+    border-left: 3px solid #30363d;
+    padding: 0.4rem 0.8rem;
+    margin-bottom: 0.4rem;
+    background: #0d1117;
+    border-radius: 0 6px 6px 0;
+}
+.ae-timeline-ts {
+    font-size: 0.74rem;
+    color: #8b949e;
+    font-family: monospace;
+    margin-right: 0.5rem;
+}
+.ae-timeline-type {
+    font-size: 0.71rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 0.4rem;
+}
+.ae-timeline-msg {
+    font-size: 0.85rem;
+    color: #c9d1d9;
+    margin-top: 0.1rem;
+}
+.ae-timeline-empty {
+    color: #8b949e;
+    font-size: 0.85rem;
+    padding: 0.4rem 0;
+}
+
+/* ─── root cause card ─── */
+.ae-rootcause-box {
+    background: #12181f;
+    border: 1px solid #30363d;
+    border-left: 4px solid #e3b341;
+    border-radius: 8px;
+    padding: 0.9rem 1.1rem;
+    font-size: 0.85rem;
+    margin-bottom: 0.6rem;
+}
+.ae-rootcause-label {
+    font-size: 0.70rem;
+    font-weight: 700;
+    color: #8b949e;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.3rem;
+}
+.ae-rootcause-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #c9d1d9;
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
+.ae-rootcause-meta {
+    color: #8b949e;
+    font-size: 0.80rem;
+    line-height: 1.7;
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -150,6 +322,16 @@ def fetch_metrics(service: str, last_n_buckets: int) -> List[Dict[str, Any]]:
 def fetch_ingestion() -> Optional[Dict[str, Any]]:
     try:
         r = requests.get(f"{BASE_URL}/metrics/ingestion", timeout=5)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=REFRESH_S)
+def fetch_engine_status() -> Optional[Dict[str, Any]]:
+    try:
+        r = requests.get(f"{BASE_URL}/__alertengine/status", timeout=5)
         r.raise_for_status()
         return r.json()
     except Exception:
@@ -253,6 +435,264 @@ def build_endpoint_df(metrics: List[Dict[str, Any]]) -> pd.DataFrame:
     )
 
 
+def generate_insights(p95: float, error_rate: float, ep_df: pd.DataFrame) -> List[str]:
+    """Translate raw metrics into human-readable operational insights."""
+    insights: List[str] = []
+
+    if p95 > 2000:
+        insights.append("⚠️ System latency is degrading across multiple endpoints")
+    elif p95 > 1000:
+        insights.append("⚡ Latency is elevated — approaching warning threshold")
+
+    if error_rate > 0.05:
+        insights.append("⚠️ Error rate is above normal operating baseline")
+    elif error_rate > 0.02:
+        insights.append("🔶 Error rate is slightly elevated — worth monitoring")
+
+    if ep_df is not None and not ep_df.empty:
+        top = ep_df.iloc[0]
+        insights.append(
+            f"🔥 Primary hotspot: <code>{top['path']}</code> "
+            f"({top['avg_latency_ms']:.0f} ms avg latency, impact score {top['impact_score']})"
+        )
+
+    if not insights:
+        insights.append("✅ System operating within normal thresholds")
+
+    return insights
+
+
+def _action_hint(ep_df: pd.DataFrame, p95: float, error_rate: float) -> str:
+    """Return a single actionable investigation hint."""
+    if ep_df is not None and not ep_df.empty:
+        if p95 > _LATENCY_CRIT_MS:
+            top = ep_df.iloc[0]
+            return f"👉 Investigate <code>{top['path']}</code> for performance degradation"
+        high_err = ep_df[ep_df["error_rate_pct"] > _ERR_WARN * 100]
+        if not high_err.empty:
+            worst = high_err.iloc[0]
+            return f"👉 Check <code>{worst['path']}</code> — {worst['error_rate_pct']:.1f}% error rate"
+    return "✅ System healthy — no immediate action required"
+
+
+def build_incident_timeline(
+    ts_df: pd.DataFrame,
+    ep_df: pd.DataFrame,
+    health: Optional[Dict],
+) -> List[Dict[str, Any]]:
+    """
+    Reconstruct a causal sequence of system degradation events from metrics.
+
+    Each returned dict is a TimelineEvent with keys:
+        timestamp, event_type, severity, message
+
+    Events are ordered chronologically; ALERT_TRIGGERED is always last.
+    """
+    if health is None:
+        return []
+
+    h_met = health.get("metrics", {})
+    p95 = float(h_met.get("overall_p95_ms", 0.0))
+    error_rate = float(h_met.get("error_rate", 0.0))
+    error_rate_pct = error_rate * 100
+    status = health.get("status", "unknown")
+
+    # Derive a base timestamp for simulated ordering.
+    base_ts: Optional[Any] = None
+    if not ts_df.empty and "ts" in ts_df.columns:
+        base_ts = ts_df["ts"].iloc[-1]
+
+    def _ts_label(offset_min: int) -> str:
+        if base_ts is not None:
+            t = base_ts - pd.Timedelta(minutes=offset_min)
+            return t.strftime("%H:%M") if hasattr(t, "strftime") else str(t)
+        return f"T-{offset_min}m" if offset_min > 0 else "now"
+
+    events: List[Dict[str, Any]] = []
+
+    # ── TRAFFIC_CHANGE (earliest signal) ──────────────────────────────────────
+    if not ts_df.empty and len(ts_df) > 1:
+        latest = ts_df.iloc[-1]
+        prev = ts_df.iloc[-2]
+        prev_req = float(prev["total_requests"]) if float(prev["total_requests"]) != 0 else 1.0
+        delta_pct = (float(latest["total_requests"]) - prev_req) / prev_req * 100
+        if abs(delta_pct) > _TRAFFIC_CHANGE_PCT:
+            events.append(
+                {
+                    "timestamp": _ts_label(4),
+                    "event_type": "TRAFFIC_CHANGE",
+                    "severity": "info",
+                    "message": f"Traffic change detected: {delta_pct:+.1f}%",
+                }
+            )
+
+    # ── LATENCY_SPIKE ─────────────────────────────────────────────────────────
+    if p95 > _LATENCY_CRIT_MS:
+        events.append(
+            {
+                "timestamp": _ts_label(3),
+                "event_type": "LATENCY_SPIKE",
+                "severity": "critical",
+                "message": f"P95 latency exceeded {p95:.0f}ms",
+            }
+        )
+    elif p95 > _LATENCY_WARN_MS:
+        events.append(
+            {
+                "timestamp": _ts_label(3),
+                "event_type": "LATENCY_SPIKE",
+                "severity": "warning",
+                "message": f"P95 latency exceeded {p95:.0f}ms",
+            }
+        )
+
+    # ── ERROR_SPIKE ───────────────────────────────────────────────────────────
+    if error_rate_pct > _ERR_CRIT * 100:
+        events.append(
+            {
+                "timestamp": _ts_label(2),
+                "event_type": "ERROR_SPIKE",
+                "severity": "critical",
+                "message": f"Error rate spiked to {error_rate_pct:.1f}%",
+            }
+        )
+    elif error_rate_pct > _ERR_WARN * 100:
+        events.append(
+            {
+                "timestamp": _ts_label(2),
+                "event_type": "ERROR_SPIKE",
+                "severity": "warning",
+                "message": f"Error rate spiked to {error_rate_pct:.1f}%",
+            }
+        )
+
+    # ── ENDPOINT_DEGRADATION (top-25% by impact_score, up to 3) ──────────────
+    if ep_df is not None and not ep_df.empty:
+        p75 = ep_df["impact_score"].quantile(0.75)
+        top_degraded = ep_df[ep_df["impact_score"] >= p75].head(3)
+        for _, row in top_degraded.iterrows():
+            sev = (
+                "critical"
+                if row["error_rate_pct"] > 10 or row["avg_latency_ms"] > 1000
+                else "warning"
+            )
+            events.append(
+                {
+                    "timestamp": _ts_label(1),
+                    "event_type": "ENDPOINT_DEGRADATION",
+                    "severity": sev,
+                    "message": (
+                        f"Endpoint {row['path']} showing degradation "
+                        f"(latency {row['avg_latency_ms']:.0f}ms, "
+                        f"error {row['error_rate_pct']:.1f}%)"
+                    ),
+                }
+            )
+
+    # ── ALERT_TRIGGERED (always last, only when alerting) ────────────────────
+    if status in ("warning", "critical"):
+        events.append(
+            {
+                "timestamp": _ts_label(0),
+                "event_type": "ALERT_TRIGGERED",
+                "severity": "critical",
+                "message": f"Alert triggered: system entered {status} state",
+            }
+        )
+
+    return events
+
+
+def build_root_cause(
+    ep_df: pd.DataFrame,
+    health: Optional[Dict],
+) -> Dict[str, str]:
+    """
+    Apply heuristic rules to identify the primary root cause hypothesis.
+
+    Rules are evaluated in the following order (first match wins):
+        1. Combined failure  — error_rate >= 5% AND p95 >= 1000ms → "Very High"
+        2. Error dominant    — error_rate >= 5%                    → "High"
+        3. Latency dominant  — p95 >= 1000ms AND error_rate < 5%  → "High"
+        4. Default / stable  — no threshold breached               → "Low"
+
+    The combined rule is checked before the error-only rule because it is a
+    strict superset and produces a more accurate classification.
+
+    Returns a dict with keys: root_cause, service, signal, confidence.
+    """
+    if health is None:
+        return {
+            "root_cause": "No data — backend unreachable",
+            "service": "unknown",
+            "signal": "None",
+            "confidence": "None",
+        }
+
+    h_met = health.get("metrics", {})
+    p95 = float(h_met.get("overall_p95_ms", 0.0))
+    error_rate = float(h_met.get("error_rate", 0.0))
+    error_rate_pct = error_rate * 100
+    svc = health.get("service_name", "unknown")
+
+    has_errors = error_rate >= _ERR_WARN
+    has_latency = p95 >= _LATENCY_CRIT_MS
+
+    def _top_by(col: str) -> Optional[Any]:
+        if ep_df is not None and not ep_df.empty:
+            return ep_df.sort_values(col, ascending=False).iloc[0]
+        return None
+
+    # Rule 3 — Combined failure (checked first: most specific)
+    if has_errors and has_latency:
+        row = _top_by("impact_score")
+        endpoint = row["path"] if row is not None else "unknown endpoint"
+        return {
+            "root_cause": (
+                f"{endpoint} contributing to combined latency and error degradation"
+            ),
+            "service": svc,
+            "signal": "Multi-factor failure (latency + errors)",
+            "confidence": "Very High",
+        }
+
+    # Rule 1 — Error dominant
+    if has_errors:
+        row = _top_by("error_rate_pct")
+        if row is not None:
+            endpoint, rate = row["path"], float(row["error_rate_pct"])
+        else:
+            endpoint, rate = "unknown endpoint", error_rate_pct
+        return {
+            "root_cause": f"{endpoint} showing elevated error rate ({rate:.1f}%)",
+            "service": svc,
+            "signal": "Error rate breach",
+            "confidence": "High",
+        }
+
+    # Rule 2 — Latency dominant
+    if has_latency:
+        row = _top_by("avg_latency_ms")
+        if row is not None:
+            endpoint, ms = row["path"], float(row["avg_latency_ms"])
+        else:
+            endpoint, ms = "unknown endpoint", p95
+        return {
+            "root_cause": f"{endpoint} exhibiting high latency ({ms:.0f}ms)",
+            "service": svc,
+            "signal": "Latency degradation",
+            "confidence": "High",
+        }
+
+    # Rule 4 — Default / stable
+    return {
+        "root_cause": "No dominant failing endpoint detected",
+        "service": svc,
+        "signal": "System stable or noise-level variance",
+        "confidence": "Low",
+    }
+
+
 # ── Chart theme ───────────────────────────────────────────────────────────────
 
 _CHART_BASE = dict(
@@ -315,6 +755,7 @@ with st.sidebar:
 health = fetch_health()
 metrics = fetch_metrics(service, last_n_buckets)
 ingestion = fetch_ingestion()
+engine_status = fetch_engine_status()
 
 ts_df = build_timeseries_df(metrics)
 ep_df = build_endpoint_df(metrics)
@@ -339,7 +780,21 @@ else:
 rpm = int(ts_df["total_requests"].iloc[-1]) if not ts_df.empty else 0
 h_score = compute_health_score(h_p95, h_err)
 
-# ── Title bar ─────────────────────────────────────────────────────────────────
+# Engine status extras (onboarding / demo mode)
+demo_mode = bool((engine_status or {}).get("demo_mode", False))
+engine_mode = (engine_status or {}).get("mode", "unknown")
+actions_enabled = bool((engine_status or {}).get("actions_enabled", False))
+
+if not health and not metrics and not ingestion:
+    st.error(
+        "⚠️  Backend unreachable — verify `ALERTENGINE_BASE_URL` and that the server is running."
+    )
+
+err_pct = h_err * 100
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TITLE BAR  +  SYSTEM SUMMARY (below title)
+# ─────────────────────────────────────────────────────────────────────────────
 
 col_title, col_ts = st.columns([5, 1])
 with col_title:
@@ -351,45 +806,367 @@ with col_ts:
         unsafe_allow_html=True,
     )
 
-if not health and not metrics and not ingestion:
-    st.error(
-        "⚠️  Backend unreachable — verify `ALERTENGINE_BASE_URL` and that the server is running."
+# ── System Summary card ───────────────────────────────────────────────────────
+_demo_badge = (
+    '<span class="ae-summary-pill" style="background:#1f4068;color:#58a6ff">🧪 Demo data</span>'
+    if demo_mode else ""
+)
+_mode_badge = f'<span class="ae-summary-pill">{engine_mode} mode</span>'
+_svc_badge  = f'<span class="ae-summary-pill">service: {h_svc or service}</span>'
+_action_badge = (
+    '<span class="ae-summary-pill" style="background:#1a2f1a;color:#3fb950">actions ON</span>'
+    if actions_enabled else ""
+)
+
+_summary_status_map = {
+    "ok":       ("✅ System Normal",   "c-ok"),
+    "warning":  ("⚠️ Degraded",        "c-warning"),
+    "critical": ("🔴 Critical",        "c-critical"),
+    "unknown":  ("❓ Unknown",         "c-muted"),
+}
+_sum_label, _sum_cls = _summary_status_map.get(h_status, ("❓ Unknown", "c-muted"))
+
+st.markdown(
+    f'<div class="ae-summary-card">'
+    f'<div>'
+    f'  <div class="ae-summary-status {_sum_cls}">{_sum_label}</div>'
+    f'  <div class="ae-summary-meta">'
+    f'    P95 {h_p95:.0f} ms &nbsp;·&nbsp; Error rate {err_pct:.1f}%'
+    f'    &nbsp;·&nbsp; Health {h_score}/100 &nbsp;·&nbsp; {h_n} samples'
+    f'  </div>'
+    f'</div>'
+    f'<div style="margin-left:auto;display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center">'
+    f'  {_mode_badge}{_svc_badge}{_demo_badge}{_action_badge}'
+    f'</div>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1 · SYSTEM INTELLIGENCE  +  ACTION HINTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+st.markdown('<div class="ae-section">System Intelligence</div>', unsafe_allow_html=True)
+
+intel_col, hint_col = st.columns([3, 2])
+
+with intel_col:
+    insights = generate_insights(h_p95, h_err, ep_df)
+    items_html = "".join(
+        f'<div class="ae-insight-item">• {item}</div>' for item in insights
     )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SECTION 1 · System Health Strip
-# ─────────────────────────────────────────────────────────────────────────────
-
-st.markdown('<div class="ae-section">System Health</div>', unsafe_allow_html=True)
-
-c1, c2, c3, c4, c5 = st.columns(5)
-
-with c1:
     st.markdown(
-        card("System Status", f"{status_emoji(h_status)} {h_status.upper()}", status_css(h_status)),
+        f'<div class="ae-intelligence-box">{items_html}</div>',
         unsafe_allow_html=True,
     )
 
-with c2:
+with hint_col:
+    st.markdown('<div class="ae-section">What Should I Look At?</div>', unsafe_allow_html=True)
+    hint_text = _action_hint(ep_df, h_p95, h_err)
+    st.markdown(
+        f'<div class="ae-hint-box">{hint_text}</div>',
+        unsafe_allow_html=True,
+    )
+    if not actions_enabled:
+        st.markdown(
+            '<div class="ae-hint-box" style="border-left-color:#e3b341">'
+            "💡 <strong>Tip:</strong> Enable incident actions:<br>"
+            "<code>from fastapi_alertengine import actions_router</code><br>"
+            "<code>app.include_router(actions_router)</code>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 1b · INCIDENT TIMELINE  +  ROOT CAUSE
+# Placed above the Active Incident card as the storytelling entry point.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_timeline_events = build_incident_timeline(ts_df, ep_df, health)
+_root_cause = build_root_cause(ep_df, health)
+
+# Only render the section when there is something meaningful to show.
+if _timeline_events or (health and h_status in ("warning", "critical")):
+    st.markdown('<div class="ae-section">Incident Timeline</div>', unsafe_allow_html=True)
+
+    tl_col, rc_col = st.columns([3, 2])
+
+    # ── Timeline events ───────────────────────────────────────────────────────
+    with tl_col:
+        _SEV_COLOR = {"info": "#58a6ff", "warning": "#e3b341", "critical": "#f85149"}
+        _SEV_ICON  = {"info": "ℹ️",      "warning": "⚠️",      "critical": "🔴"}
+        if _timeline_events:
+            for _ev in _timeline_events:
+                _sev   = _ev.get("severity", "info")
+                _color = _SEV_COLOR.get(_sev, "#8b949e")
+                _icon  = _SEV_ICON.get(_sev, "·")
+                st.markdown(
+                    f'<div class="ae-timeline-event" style="border-left-color:{_color}">'
+                    f'  <span class="ae-timeline-ts">{_ev.get("timestamp", "—")}</span>'
+                    f'  <span class="ae-timeline-type" style="color:{_color}">'
+                    f'    {_ev.get("event_type", "")}'
+                    f'  </span>'
+                    f'  <div class="ae-timeline-msg">{_icon} {_ev.get("message", "")}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="ae-timeline-empty">✅ No incident events detected in the current window.</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Root cause ────────────────────────────────────────────────────────────
+    with rc_col:
+        st.markdown('<div class="ae-section">Root Cause</div>', unsafe_allow_html=True)
+        _conf_color = {
+            "Very High": "#f85149",
+            "High":      "#e3b341",
+            "Low":       "#3fb950",
+            "None":      "#8b949e",
+        }.get(_root_cause.get("confidence", "Low"), "#8b949e")
+        st.markdown(
+            f'<div class="ae-rootcause-box">'
+            f'  <div class="ae-rootcause-label">Likely Root Cause</div>'
+            f'  <div class="ae-rootcause-value">{_root_cause["root_cause"]}</div>'
+            f'  <div class="ae-rootcause-meta">'
+            f'    <strong>Affected Service:</strong> {_root_cause["service"]}<br>'
+            f'    <strong>Primary Signal:</strong> {_root_cause["signal"]}<br>'
+            f'    <strong>Confidence:</strong>'
+            f'    <span style="color:{_conf_color}">&nbsp;{_root_cause["confidence"]}</span>'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2 · ACTIVE INCIDENT CARD  (reworked from "Alert Status")
+# ─────────────────────────────────────────────────────────────────────────────
+
+st.markdown('<div class="ae-section">Active Incident</div>', unsafe_allow_html=True)
+
+inc_left, inc_right = st.columns([3, 2])
+
+with inc_left:
+    if health:
+        ts_str = fmt_ts(h_ts)
+        inc_cls = f"ae-incident-{h_status}" if h_status in ("ok", "warning", "critical") else "ae-incident-unknown"
+
+        incident_summary = {
+            "ok":       ("System operating normally",           "Normal Operations",  "No active issues detected"),
+            "warning":  ("Degraded performance detected",       "Performance Degraded", "Latency or error rate elevated above baseline"),
+            "critical": ("Critical latency or error threshold breached", "Active Incident", "Immediate attention recommended"),
+        }
+        _inc_desc, _inc_type, _inc_impact = incident_summary.get(
+            h_status, ("Evaluation unavailable", "Unknown", "Backend may be unreachable")
+        )
+
+        # Trend label from anomaly score
+        if h_anomaly > 2.0:
+            _trend = "📈 Rapidly worsening"
+        elif h_anomaly > 1.0:
+            _trend = "↗️ Trending upward"
+        elif h_anomaly > 0.2:
+            _trend = "→ Stable"
+        else:
+            _trend = "↘️ Improving"
+
+        alerts_list = health.get("alerts", [])
+        _alert_lines = ""
+        for al in alerts_list:
+            sev = al.get("severity", "warning")
+            sev_color = "#f85149" if sev == "critical" else "#e3b341"
+            _alert_lines += (
+                f'<div style="margin-top:0.4rem;padding:0.3rem 0.6rem;'
+                f'border-left:3px solid {sev_color};background:#12181f;'
+                f'border-radius:4px;font-size:0.82rem;color:#c9d1d9">'
+                f'<strong style="color:{sev_color}">{sev.upper()}</strong> — {al.get("message","")}'
+                f'</div>'
+            )
+
+        st.markdown(
+            f'<div class="ae-incident-card {inc_cls}">'
+            f'  <div class="ae-incident-title">{status_emoji(h_status)}&nbsp; {_inc_type}</div>'
+            f'  <div class="ae-incident-service">service: {h_svc} / instance: {h_inst}</div>'
+            f'  <div class="ae-incident-meta">'
+            f'    {ts_str} &nbsp;·&nbsp; {h_n} samples &nbsp;·&nbsp; anomaly {h_anomaly:.2f}'
+            f'    &nbsp;·&nbsp; {_trend}'
+            f'  </div>'
+            f'  <div class="ae-incident-body">'
+            f'    <strong>Summary:</strong> {_inc_desc}<br>'
+            f'    <strong>Impact:</strong> {_inc_impact}<br>'
+            f'    <strong>P95 latency:</strong> {h_p95:.0f} ms &nbsp;·&nbsp; '
+            f'    <strong>Error rate:</strong> {err_pct:.1f}%'
+            f'    {_alert_lines}'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        with st.expander("📐 Alert thresholds", expanded=False):
+            thresholds = health.get("thresholds", {})
+            thr_p95_w = thresholds.get("p95_warning_ms", 1000)
+            thr_p95_c = thresholds.get("p95_critical_ms", 3000)
+            thr_err_w = thresholds.get("error_rate_warning", 0.1)
+            thr_err_c = thresholds.get("error_rate_critical", 0.2)
+            th1, th2 = st.columns(2)
+            with th1:
+                st.metric("P95 warning", f"{thr_p95_w:,} ms")
+                st.metric("P95 critical", f"{thr_p95_c:,} ms")
+            with th2:
+                st.metric("Error rate warning", f"{thr_err_w*100:.0f}%")
+                st.metric("Error rate critical", f"{thr_err_c*100:.0f}%")
+    else:
+        st.markdown(
+            '<div class="ae-incident-card ae-incident-unknown">'
+            '<div class="ae-incident-title">❓ Backend Unreachable</div>'
+            '<div class="ae-incident-body">Alert state unavailable — verify backend connectivity.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+# ── System Health strip (right column alongside incident) ─────────────────────
+with inc_right:
+    st.markdown('<div class="ae-section">Health Metrics</div>', unsafe_allow_html=True)
     p95_cls = "c-critical" if h_p95 > 3000 else "c-warning" if h_p95 > 1000 else "c-ok"
-    st.markdown(card("P95 Latency", f"{h_p95:.0f} ms", p95_cls), unsafe_allow_html=True)
-
-with c3:
-    err_pct = h_err * 100
-    err_cls = "c-critical" if err_pct > 20 else "c-warning" if err_pct > 10 else "c-ok"
-    st.markdown(card("Error Rate", f"{err_pct:.1f}%", err_cls), unsafe_allow_html=True)
-
-with c4:
-    st.markdown(card("Req / Min", str(rpm), "c-blue"), unsafe_allow_html=True)
-
-with c5:
+    err_cls  = "c-critical" if err_pct > 20 else "c-warning" if err_pct > 10 else "c-ok"
     score_cls = "c-critical" if h_score < 50 else "c-warning" if h_score < 80 else "c-ok"
-    st.markdown(card("Health Score", f"{h_score} / 100", score_cls), unsafe_allow_html=True)
+    st.markdown(card("P95 Latency",   f"{h_p95:.0f} ms",   p95_cls),  unsafe_allow_html=True)
+    st.markdown(card("Error Rate",    f"{err_pct:.1f}%",    err_cls),  unsafe_allow_html=True)
+    st.markdown(card("Health Score",  f"{h_score} / 100",   score_cls), unsafe_allow_html=True)
+    st.markdown(card("Req / Min",     str(rpm),              "c-blue"), unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 2b · INCIDENT RESPONSE CONTROLS
+# Only rendered when system is degraded — gives the SRE direct action options.
+# ─────────────────────────────────────────────────────────────────────────────
+
+if h_status in ("warning", "critical"):
+    st.markdown('<div class="ae-section">Incident Response</div>', unsafe_allow_html=True)
+
+    ctrl_c1, ctrl_c2, ctrl_c3 = st.columns(3)
+
+    # ── Restart Service ───────────────────────────────────────────────────────
+    with ctrl_c1:
+        if st.button("🔁 Restart Service", use_container_width=True, key="btn_restart"):
+            if actions_enabled:
+                st.info(
+                    f"To restart **{h_svc or service}**, call the actions endpoint with a "
+                    f"signed token:\n\n"
+                    f"```\nGET {BASE_URL}/action/restart?token=<signed-jwt>\n```\n\n"
+                    f"Generate a token via your backend and visit "
+                    f"`{BASE_URL}/action/confirm?token=<jwt>` to confirm."
+                )
+            else:
+                st.warning(
+                    "Action support is not enabled on this backend.\n\n"
+                    "To activate, mount the actions router:\n"
+                    "```python\n"
+                    "from fastapi_alertengine import actions_router\n"
+                    "app.include_router(actions_router)\n"
+                    "```"
+                )
+
+    # ── Silence (session-scoped) ──────────────────────────────────────────────
+    with ctrl_c2:
+        _silenced = st.session_state.get("incident_silenced", False)
+        _btn_label = "🔔 Unsilence" if _silenced else "🔕 Silence (this session)"
+        if st.button(_btn_label, use_container_width=True, key="btn_silence"):
+            st.session_state["incident_silenced"] = not _silenced
+            if not _silenced:
+                st.success("Incident alerts silenced for this browser session.")
+            else:
+                st.info("Incident alerts re-enabled.")
+
+    # ── Copy Incident Summary ─────────────────────────────────────────────────
+    with ctrl_c3:
+        if st.button("📋 Copy Incident Summary", use_container_width=True, key="btn_copy"):
+            _summary_lines = [
+                f"Incident Summary — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"Service:      {h_svc or service}",
+                f"Status:       {h_status.upper()}",
+                f"P95 Latency:  {h_p95:.0f} ms",
+                f"Error Rate:   {err_pct:.1f}%",
+                f"Health Score: {h_score}/100",
+                "",
+                f"Root Cause:   {_root_cause['root_cause']}",
+                f"Signal:       {_root_cause['signal']}",
+                f"Confidence:   {_root_cause['confidence']}",
+            ]
+            if _timeline_events:
+                _summary_lines.append("")
+                _summary_lines.append("Timeline:")
+                for _ev in _timeline_events:
+                    _summary_lines.append(
+                        f"  {_ev.get('timestamp','—')}  [{_ev.get('event_type','')}]  "
+                        f"{_ev.get('message','')}"
+                    )
+            st.code("\n".join(_summary_lines), language="text")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECTION 3 · TOP SIGNALS  +  WHAT CHANGED
+# ─────────────────────────────────────────────────────────────────────────────
+
+sig_col, delta_col = st.columns([3, 2])
+
+with sig_col:
+    st.markdown('<div class="ae-section">Top Signals</div>', unsafe_allow_html=True)
+    if not ep_df.empty:
+        for _, row in ep_df.head(3).iterrows():
+            err_color = "#f85149" if row["error_rate_pct"] > 10 else "#e3b341" if row["error_rate_pct"] > 2 else "#3fb950"
+            lat_color = "#f85149" if row["avg_latency_ms"] > 3000 else "#e3b341" if row["avg_latency_ms"] > 1000 else "#c9d1d9"
+            st.markdown(
+                f'<div class="ae-signal-item">'
+                f'  <span class="ae-signal-path">{row["path"]}</span>'
+                f'  <span style="color:#8b949e"> [{row["method"]}]</span>'
+                f'  &nbsp;→&nbsp;'
+                f'  <span style="color:{lat_color}">{row["avg_latency_ms"]:.0f} ms avg</span>'
+                f'  &nbsp;·&nbsp;'
+                f'  <span style="color:{err_color}">{row["error_rate_pct"]:.1f}% errors</span>'
+                f'  &nbsp;·&nbsp;'
+                f'  <span style="color:#8b949e">impact {row["impact_score"]}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    else:
+        st.info("No endpoint signals in the selected time window.")
+
+with delta_col:
+    st.markdown('<div class="ae-section">What Changed</div>', unsafe_allow_html=True)
+    if not ts_df.empty and len(ts_df) > 1:
+        latest = ts_df.iloc[-1]
+        prev   = ts_df.iloc[-2]
+        delta_lat = latest["avg_latency_ms"] - prev["avg_latency_ms"]
+        delta_err = latest["error_rate_pct"] - prev["error_rate_pct"]
+        delta_req = latest["total_requests"] - prev["total_requests"]
+
+        def _delta_cls(v: float, invert: bool = False) -> str:
+            if abs(v) < 0.01:
+                return "ae-delta-flat"
+            return ("ae-delta-up" if v > 0 else "ae-delta-down") if not invert else \
+                   ("ae-delta-down" if v > 0 else "ae-delta-up")
+
+        st.markdown(
+            f'<div class="ae-delta-box">'
+            f'  <div><span class="{_delta_cls(delta_lat, invert=True)}">Latency: {delta_lat:+.1f} ms</span></div>'
+            f'  <div><span class="{_delta_cls(delta_err, invert=True)}">Error rate: {delta_err:+.2f}%</span></div>'
+            f'  <div><span class="{_delta_cls(delta_req)}">Requests: {delta_req:+.0f} / min</span></div>'
+            f'  <div style="margin-top:0.4rem;color:#8b949e;font-size:0.75rem">'
+            f'    vs previous bucket ({prev["ts"].strftime("%H:%M") if hasattr(prev["ts"], "strftime") else "prev"})'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div class="ae-delta-box"><span class="ae-delta-flat">Not enough data points for delta analysis yet.</span></div>',
+            unsafe_allow_html=True,
+        )
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 2 · Time-Series Charts
+# SECTION 4 · Time-Series Charts
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown(
@@ -467,7 +1244,7 @@ with ch3:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 3 · Endpoint Performance Table
+# SECTION 5 · Endpoint Performance Table
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown(
@@ -514,101 +1291,50 @@ else:
 st.markdown("<br>", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SECTION 4 · Alerts Panel  +  SECTION 5 · Ingestion Debug
+# SECTION 6 · Ingestion Debug
 # ─────────────────────────────────────────────────────────────────────────────
 
-al_col, ing_col = st.columns([3, 2])
+st.markdown('<div class="ae-section">Ingestion Health</div>', unsafe_allow_html=True)
 
-# ── Alerts panel ──────────────────────────────────────────────────────────────
-with al_col:
-    st.markdown('<div class="ae-section">Alert Status</div>', unsafe_allow_html=True)
+with st.expander("🔧 Ingestion details", expanded=False):
+    if ingestion:
+        enqueued       = int(ingestion.get("enqueued", 0))
+        dropped_q      = int(ingestion.get("dropped", 0))
+        dropped_agg    = int(ingestion.get("dropped_agg_keys", 0))
+        dropped_alerts = int(ingestion.get("dropped_alerts", 0))
+        last_drain     = ingestion.get("last_drain_at")
 
-    if health:
-        ts_str = fmt_ts(h_ts)
-        cls = f"ae-alert ae-alert-{h_status}" if h_status in ("ok", "warning", "critical") else "ae-alert ae-alert-unknown"
+        # Throughput estimate: total enqueued / window_seconds
+        window_s = last_n_buckets * 60
+        throughput = enqueued / window_s if window_s else 0.0
 
-        body_map = {
-            "ok":       f"All systems nominal. P95 = {h_p95:.0f} ms · error rate = {err_pct:.1f}%",
-            "warning":  f"Degraded performance detected. P95 = {h_p95:.0f} ms · error rate = {err_pct:.1f}%",
-            "critical": f"Critical threshold breached! P95 = {h_p95:.0f} ms · error rate = {err_pct:.1f}%",
-        }
-        body = body_map.get(h_status, "Evaluation unavailable.")
+        # Queue saturation: we track cumulative enqueued so it's not a real
+        # queue fill %, but dropped > 0 signals pressure.
+        pressure = "🔴 Pressure!" if dropped_q > 0 else "🟢 Healthy"
 
-        thresholds = health.get("thresholds", {})
-        thr_p95_w = thresholds.get("p95_warning_ms", 1000)
-        thr_p95_c = thresholds.get("p95_critical_ms", 3000)
-        thr_err_w = thresholds.get("error_rate_warning", 0.1)
-        thr_err_c = thresholds.get("error_rate_critical", 0.2)
+        r1, r2 = st.columns(2)
+        with r1:
+            st.metric("Enqueued (total)", f"{enqueued:,}")
+            st.metric("Dropped — queue", f"{dropped_q:,}",
+                      delta=f"+{dropped_q}" if dropped_q else None,
+                      delta_color="inverse")
+            st.metric("Dropped — agg keys", f"{dropped_agg:,}",
+                      delta=f"+{dropped_agg}" if dropped_agg else None,
+                      delta_color="inverse")
+        with r2:
+            st.metric("Dropped — alerts", f"{dropped_alerts:,}",
+                      delta=f"+{dropped_alerts}" if dropped_alerts else None,
+                      delta_color="inverse")
+            st.metric("Last drain", fmt_ts(last_drain))
+            st.metric("Est. throughput", f"{throughput:.1f} req/s")
 
-        st.markdown(
-            f'<div class="{cls}">'
-            f'<div class="ae-alert-title">{status_emoji(h_status)}&nbsp; {h_status.upper()}</div>'
-            f'<div class="ae-alert-meta">{ts_str} &nbsp;·&nbsp; {h_svc} / {h_inst} &nbsp;·&nbsp; {h_n} samples &nbsp;·&nbsp; anomaly {h_anomaly:.2f}</div>'
-            f'<div class="ae-alert-body">{body}</div>'
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(f"**Queue pressure:** {pressure}")
 
-        # Thresholds reference card
-        with st.expander("📐 Alert thresholds", expanded=False):
-            th1, th2 = st.columns(2)
-            with th1:
-                st.metric("P95 warning", f"{thr_p95_w:,} ms")
-                st.metric("P95 critical", f"{thr_p95_c:,} ms")
-            with th2:
-                st.metric("Error rate warning", f"{thr_err_w*100:.0f}%")
-                st.metric("Error rate critical", f"{thr_err_c*100:.0f}%")
+        # Visual saturation bar
+        fill_pct = min(1.0, dropped_q / max(enqueued, 1))
+        st.progress(fill_pct, text=f"Drop ratio: {fill_pct*100:.1f}%")
     else:
-        st.markdown(
-            '<div class="ae-alert ae-alert-unknown">❓ <strong>UNKNOWN</strong>'
-            '<div class="ae-alert-body">Backend not reachable — alert state unavailable.</div>'
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-# ── Ingestion debug panel ─────────────────────────────────────────────────────
-with ing_col:
-    st.markdown('<div class="ae-section">Ingestion Health</div>', unsafe_allow_html=True)
-
-    with st.expander("🔧 Ingestion details", expanded=True):
-        if ingestion:
-            enqueued       = int(ingestion.get("enqueued", 0))
-            dropped_q      = int(ingestion.get("dropped", 0))
-            dropped_agg    = int(ingestion.get("dropped_agg_keys", 0))
-            dropped_alerts = int(ingestion.get("dropped_alerts", 0))
-            last_drain     = ingestion.get("last_drain_at")
-
-            # Throughput estimate: total enqueued / window_seconds
-            window_s = last_n_buckets * 60
-            throughput = enqueued / window_s if window_s else 0.0
-
-            # Queue saturation: we track cumulative enqueued so it's not a real
-            # queue fill %, but dropped > 0 signals pressure.
-            pressure = "🔴 Pressure!" if dropped_q > 0 else "🟢 Healthy"
-
-            r1, r2 = st.columns(2)
-            with r1:
-                st.metric("Enqueued (total)", f"{enqueued:,}")
-                st.metric("Dropped — queue", f"{dropped_q:,}",
-                          delta=f"+{dropped_q}" if dropped_q else None,
-                          delta_color="inverse")
-                st.metric("Dropped — agg keys", f"{dropped_agg:,}",
-                          delta=f"+{dropped_agg}" if dropped_agg else None,
-                          delta_color="inverse")
-            with r2:
-                st.metric("Dropped — alerts", f"{dropped_alerts:,}",
-                          delta=f"+{dropped_alerts}" if dropped_alerts else None,
-                          delta_color="inverse")
-                st.metric("Last drain", fmt_ts(last_drain))
-                st.metric("Est. throughput", f"{throughput:.1f} req/s")
-
-            st.markdown(f"**Queue pressure:** {pressure}")
-
-            # Visual saturation bar
-            fill_pct = min(1.0, dropped_q / max(enqueued, 1))
-            st.progress(fill_pct, text=f"Drop ratio: {fill_pct*100:.1f}%")
-        else:
-            st.warning("Ingestion stats unavailable — backend may be unreachable.")
+        st.warning("Ingestion stats unavailable — backend may be unreachable.")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -625,3 +1351,4 @@ st.markdown(
 if auto_refresh:
     time.sleep(REFRESH_S)
     st.rerun()
+
