@@ -1,6 +1,6 @@
-# anchorflow/actions/audit.py
+# fastapi_alertengine/actions/audit.py
 """
-Structured audit logging for AnchorFlow remote actions.
+Structured audit logging for fastapi-alertengine remote actions.
 
 Every infrastructure action — whether it succeeds or fails — must call
 ``log_action``.  The output is a single JSON line emitted through the
@@ -11,7 +11,7 @@ Example log line::
 
     {"user_id": "user-42", "action": "restart", "service": "payments-api",
      "timestamp": "2026-04-15T16:00:00.000000Z", "result": "success",
-     "detail": "[SIMULATED] Restarted payments-api"}
+     "detail": "Restarted payments-api (container id: abc123)"}
 """
 
 import json
@@ -19,7 +19,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Literal
 
-logger = logging.getLogger("anchorflow.audit")
+logger = logging.getLogger("fastapi_alertengine.audit")
 
 
 def log_action(

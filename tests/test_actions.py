@@ -22,17 +22,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from anchorflow.actions.audit import log_action
-from anchorflow.actions.replay import _reset as reset_replay_store
-from anchorflow.actions.router import router as actions_router
-from anchorflow.actions.services import restart_container
-from anchorflow.actions.tokens import (
+from fastapi_alertengine.actions.audit import log_action
+from fastapi_alertengine.actions.replay import _reset as reset_replay_store
+from fastapi_alertengine.actions.router import router as actions_router
+from fastapi_alertengine.actions.services import restart_container
+from fastapi_alertengine.actions.tokens import (
     _ALGORITHM,
     _TOKEN_TTL_SECONDS,
     generate_action_token,
     verify_action_token,
 )
-from anchorflow.actions.whatsapp import build_action_message
+from fastapi_alertengine.actions.whatsapp import build_action_message
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -139,7 +139,7 @@ class TestVerifyActionToken:
 
 class TestLogAction:
     def test_success_logged_at_info(self, caplog):
-        with caplog.at_level(logging.INFO, logger="anchorflow.audit"):
+        with caplog.at_level(logging.INFO, logger="fastapi_alertengine.audit"):
             log_action(
                 user_id="u1",
                 action="restart",
@@ -157,7 +157,7 @@ class TestLogAction:
         assert record["timestamp"].endswith("Z")
 
     def test_failure_logged_at_warning(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="anchorflow.audit"):
+        with caplog.at_level(logging.WARNING, logger="fastapi_alertengine.audit"):
             log_action(
                 user_id="u2",
                 action="restart",
@@ -168,7 +168,7 @@ class TestLogAction:
         assert caplog.records[0].levelno == logging.WARNING
 
     def test_timestamp_format(self, caplog):
-        with caplog.at_level(logging.INFO, logger="anchorflow.audit"):
+        with caplog.at_level(logging.INFO, logger="fastapi_alertengine.audit"):
             log_action(user_id="u", action="a", service="s", result="success")
         record = json.loads(caplog.records[0].message)
         # ISO 8601 UTC with microseconds, ending in Z
@@ -178,7 +178,7 @@ class TestLogAction:
 
 # ── services.py ───────────────────────────────────────────────────────────────
 
-_DOCKER_PATCH = "anchorflow.actions.services.subprocess.run"
+_DOCKER_PATCH = "fastapi_alertengine.actions.services.subprocess.run"
 
 
 def _ok_run(container_id="abc123"):
@@ -329,12 +329,12 @@ class TestActionRestartEndpoint:
 
     def test_audit_log_written_on_success(self, client, caplog):
         token = self._valid_token()
-        with caplog.at_level(logging.INFO, logger="anchorflow.audit"):
+        with caplog.at_level(logging.INFO, logger="fastapi_alertengine.audit"):
             client.get(f"/action/restart?token={token}")
         audit_records = [
             json.loads(r.message)
             for r in caplog.records
-            if r.name == "anchorflow.audit"
+            if r.name == "fastapi_alertengine.audit"
         ]
         assert len(audit_records) == 1
         assert audit_records[0]["result"] == "success"

@@ -1,6 +1,6 @@
-# anchorflow/actions/replay.py
+# fastapi_alertengine/actions/replay.py
 """
-In-memory replay-attack protection for AnchorFlow action tokens.
+In-memory replay-attack protection for fastapi-alertengine action tokens.
 
 Each action token carries a unique ``jti`` (JWT ID).  Once a token is
 consumed by the ``/action/restart`` endpoint its JTI is recorded here so

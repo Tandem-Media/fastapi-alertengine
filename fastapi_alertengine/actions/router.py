@@ -1,6 +1,6 @@
-# anchorflow/actions/router.py
+# fastapi_alertengine/actions/router.py
 """
-FastAPI router for AnchorFlow remote infrastructure actions.
+FastAPI router for fastapi-alertengine remote infrastructure actions.
 
 Endpoints
 ---------
@@ -31,10 +31,10 @@ import jwt
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from anchorflow.actions.audit import log_action
-from anchorflow.actions.replay import is_token_used, mark_token_used
-from anchorflow.actions.services import restart_container
-from anchorflow.actions.tokens import verify_action_token
+from fastapi_alertengine.actions.audit import log_action
+from fastapi_alertengine.actions.replay import is_token_used, mark_token_used
+from fastapi_alertengine.actions.services import restart_container
+from fastapi_alertengine.actions.tokens import verify_action_token
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ async def confirm_action(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Confirm Action — AnchorFlow</title>
+  <title>Confirm Action — fastapi-alertengine</title>
 </head>
 <body>
   <h2>Confirm Infrastructure Action</h2>

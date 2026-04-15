@@ -1,6 +1,6 @@
-# anchorflow/actions/tokens.py
+# fastapi_alertengine/actions/tokens.py
 """
-JWT action-token helpers for the AnchorFlow remote-action system.
+JWT action-token helpers for the fastapi-alertengine remote-action system.
 
 Tokens are short-lived (90 seconds by default) HS256 JWTs that authorise
 a single infrastructure action.  The signing secret is read from the

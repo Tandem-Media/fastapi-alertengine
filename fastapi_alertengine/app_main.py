@@ -12,7 +12,7 @@ Then hit:
 """
 
 from fastapi import FastAPI, HTTPException
-from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
+from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine, actions_router
 
 app = FastAPI(title="fastapi_alertengine demo", version="1.1.4")
 
@@ -25,6 +25,9 @@ async def start_drain():
 
 # Register metrics middleware
 app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+
+# Mount WhatsApp incident-control endpoints (/action/confirm, /action/restart)
+app.include_router(actions_router)
 
 
 @app.get("/")

@@ -1,8 +1,8 @@
-# anchorflow/actions/services.py
+# fastapi_alertengine/actions/services.py
 """
-Infrastructure service handlers for AnchorFlow remote actions.
+Infrastructure service handlers for fastapi-alertengine remote actions.
 
-Docker backend (Phase 2):
+Docker backend:
     Executes ``docker restart <container>`` in a subprocess so that no
     external Python packages are required.  The call is run in a thread
     executor to remain non-blocking inside an async handler.

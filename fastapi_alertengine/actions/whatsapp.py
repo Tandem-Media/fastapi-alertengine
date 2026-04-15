@@ -1,6 +1,6 @@
-# anchorflow/actions/whatsapp.py
+# fastapi_alertengine/actions/whatsapp.py
 """
-WhatsApp integration hook for AnchorFlow remote actions.
+WhatsApp integration hook for fastapi-alertengine remote actions.
 
 This module builds signed action URLs that can be embedded in WhatsApp
 template messages.  When the recipient taps the link, the JWT in the URL
@@ -20,8 +20,8 @@ Typical flow
 Configuration
 -------------
 ``BASE_URL``
-    The public base URL of this AnchorFlow instance, e.g.
-    ``https://anchorflow.example.com``.  Read from the ``BASE_URL``
+    The public base URL of this fastapi-alertengine instance, e.g.
+    ``https://alertengine.example.com``.  Read from the ``BASE_URL``
     environment variable.
 
 ``ACTION_SECRET_KEY``
@@ -31,7 +31,7 @@ Configuration
 import os
 from dataclasses import dataclass
 
-from anchorflow.actions.tokens import generate_action_token
+from fastapi_alertengine.actions.tokens import generate_action_token
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ def build_action_message(
         # Pass msg.signed_url to your WhatsApp Business API call:
         whatsapp_client.send_template(
             to="+1234567890",
-            template="anchorflow_action",
+            template="alertengine_action",
             params={"url": msg.signed_url, "service": "payments-api"},
         )
     """
@@ -103,7 +103,7 @@ def build_action_message(
     signed_url = f"{resolved_base}/action/confirm?token={token}"
 
     body = (
-        f"AnchorFlow alert: action *{action}* requested for service *{service}*.\n"
+        f"Alert: action *{action}* requested for service *{service}*.\n"
         f"Tap the link below to confirm (link expires in 90 seconds):\n{signed_url}"
     )
 
