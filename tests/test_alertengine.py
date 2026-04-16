@@ -1839,7 +1839,7 @@ class TestPlugAndPlay:
         config = AlertConfig()
         engine = AlertEngine(config)
        # Force memory mode by making Redis unavailable
-        with patch("fastapi_alertengine.engine.redis") as mock_redis_mod:
+        with patch("redis.Redis.from_url") as mock_redis_mod:
             mock_redis_mod.Redis.from_url.return_value.ping.side_effect = ConnectionError("no redis")
             engine.start(app)
         assert engine._memory_mode is True
