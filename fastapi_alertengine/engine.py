@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .config import AlertConfig
-from .storage import flush_aggregates, read_aggregates, read_metrics, write_batch
+from .storage import flush_aggregates, read_aggregates, read_metrics, write_batch, write_incident_event, read_incident_events
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +303,25 @@ class AlertEngine:
         elif erpct > cfg.error_rate_warning_pct:
             alerts.append({"type": "error_anomaly", "severity": "warning",
                            "message": f"Error rate elevated: {erpct:.1f}% (Baseline: {cfg.error_rate_baseline_pct}%)"}); status="warning" if status!="critical" else status
+        # ── Write to incident timeline (Redis ZSET) if degraded ────────────
+        if status in ("warning", "critical") and not self._memory_mode:
+            import time as _t
+            for alert in alerts:
+                write_incident_event(self.redis, self.config, {
+                    "timestamp": float(ts),
+                    "service":   self.config.service_name,
+                    "instance":  self.config.instance_id,
+                    "status":    status,
+                    "event_type": alert.get("type", "ALERT"),
+                    "severity":  alert.get("severity", status),
+                    "message":   alert.get("message", ""),
+                    "metrics": {
+                        "p95_ms":     round(overall_p95, 1),
+                        "error_rate": round(error_rate, 4),
+                        "samples":    len(events),
+                    },
+                })
+
         return {"status": status, "service_name": self.config.service_name, "instance_id": self.config.instance_id,
                 "metrics": {"overall_p95_ms": round(overall_p95,1), "webhook_p95_ms": round(webhook_p95,1),
                             "api_p95_ms": round(api_p95,1), "error_rate": round(error_rate,4),
@@ -376,6 +395,16 @@ class AlertEngine:
 
         @app.get("/metrics/ingestion", include_in_schema=False)
         def _mi(): return engine.get_ingestion_stats()
+
+        @app.get("/incidents/timeline", include_in_schema=False)
+        def _it(service: Optional[str] = None, since: float = 0.0, limit: int = 50):
+            if engine._memory_mode:
+                return {"events": [], "mode": "memory", "note": "Timeline requires Redis"}
+            return {"events": read_incident_events(
+                engine.redis, engine.config,
+                service or engine.config.service_name,
+                since=since, limit=limit,
+            )}
 
         @app.get("/__alertengine/status", include_in_schema=False)
         def _status():

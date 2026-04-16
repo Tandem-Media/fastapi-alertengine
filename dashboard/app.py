@@ -328,6 +328,22 @@ def fetch_ingestion() -> Optional[Dict[str, Any]]:
         return None
 
 
+
+@st.cache_data(ttl=REFRESH_S)
+def fetch_timeline(service: str, since: float = 0.0) -> list:
+    """Fetch real incident events from the backend append-only timeline."""
+    try:
+        r = requests.get(
+            f"{BASE_URL}/incidents/timeline",
+            params={"service": service, "since": since, "limit": 50},
+            timeout=5,
+        )
+        r.raise_for_status()
+        return r.json().get("events", [])
+    except Exception:
+        return []
+
+
 @st.cache_data(ttl=REFRESH_S)
 def fetch_engine_status() -> Optional[Dict[str, Any]]:
     try:
@@ -882,7 +898,13 @@ with hint_col:
 # Placed above the Active Incident card as the storytelling entry point.
 # ─────────────────────────────────────────────────────────────────────────────
 
-_timeline_events = build_incident_timeline(ts_df, ep_df, health)
+# ── Real incident timeline from backend ───────────────────────────────
+_raw_timeline = fetch_timeline(service)
+# Fallback to synthetic if no real events yet (memory mode / new deploy)
+if _raw_timeline:
+    timeline = _raw_timeline
+else:
+    _timeline_events = build_incident_timeline(ts_df, ep_df, health)
 _root_cause = build_root_cause(ep_df, health)
 
 # Only render the section when there is something meaningful to show.
@@ -949,7 +971,14 @@ inc_left, inc_right = st.columns([3, 2])
 
 with inc_left:
     if health:
-        ts_str = fmt_ts(h_ts)
+        # Handle both real events (timestamp: float) and synthetic (ts: Timestamp)
+        if "timestamp" in ev:
+            from datetime import datetime as _dt
+            ts_str = _dt.fromtimestamp(float(ev["timestamp"])).strftime("%H:%M:%S")
+        elif "ts" in ev:
+            ts_str = ev["ts"].strftime("%H:%M") if hasattr(ev["ts"], "strftime") else str(ev["ts"])[:16]
+        else:
+            ts_str = "—"
         inc_cls = f"ae-incident-{h_status}" if h_status in ("ok", "warning", "critical") else "ae-incident-unknown"
 
         incident_summary = {

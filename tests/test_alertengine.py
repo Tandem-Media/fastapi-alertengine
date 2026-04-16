@@ -116,7 +116,7 @@ class TestInstrument:
         with TestClient(app) as client:
             client.get("/ping")
 
-        assert engine._queue.qsize() >= 1, "middleware should have enqueued a metric"
+        assert engine._stats["enqueued"] >= 1, "middleware should have enqueued a metric"
 
     def test_metrics_enqueued_contain_expected_keys(self):
         app = FastAPI()
