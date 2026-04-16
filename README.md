@@ -1,7 +1,7 @@
 # ⚡ fastapi-alertengine
 
 [![PyPI version](https://badge.fury.io/py/fastapi-alertengine.svg)](https://pypi.org/project/fastapi-alertengine/)
-[![Tests](https://img.shields.io/badge/tests-164%20passed-brightgreen)](https://github.com/Tandem-Media/fastapi-alertengine)
+[![Tests](https://img.shields.io/badge/tests-259%20passed-brightgreen)](https://github.com/Tandem-Media/fastapi-alertengine)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/fastapi-alertengine/)
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/Tandem-Media/fastapi-alertengine/blob/main/LICENSE)
 [![PyPI Downloads](https://img.shields.io/pypi/dm/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
