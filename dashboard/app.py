@@ -902,9 +902,10 @@ with hint_col:
 _raw_timeline = fetch_timeline(service)
 # Fallback to synthetic if no real events yet (memory mode / new deploy)
 if _raw_timeline:
-    timeline = _raw_timeline
+    _timeline_events = _raw_timeline
 else:
     _timeline_events = build_incident_timeline(ts_df, ep_df, health)
+
 _root_cause = build_root_cause(ep_df, health)
 
 # Only render the section when there is something meaningful to show.
@@ -918,13 +919,13 @@ if _timeline_events or (health and h_status in ("warning", "critical")):
         _SEV_COLOR = {"info": "#58a6ff", "warning": "#e3b341", "critical": "#f85149"}
         _SEV_ICON  = {"info": "ℹ️",      "warning": "⚠️",      "critical": "🔴"}
         if _timeline_events:
-            for _ev in _timeline_events:
+            for _ev in reversed(_timeline_events):
                 _sev   = _ev.get("severity", "info")
                 _color = _SEV_COLOR.get(_sev, "#8b949e")
                 _icon  = _SEV_ICON.get(_sev, "·")
                 st.markdown(
                     f'<div class="ae-timeline-event" style="border-left-color:{_color}">'
-                    f'  <span class="ae-timeline-ts">{_ev.get("timestamp", "—")}</span>'
+                    f'  <span class="ae-timeline-ts">{__import__("datetime").datetime.fromtimestamp(float(_ev["timestamp"])).strftime("%H:%M:%S") if _ev.get("timestamp") and str(_ev.get("timestamp","")).replace(".","").isdigit() else (_ev.get("ts_str") or _ev.get("timestamp") or "—")}</span>'
                     f'  <span class="ae-timeline-type" style="color:{_color}">'
                     f'    {_ev.get("event_type", "")}'
                     f'  </span>'
@@ -971,14 +972,6 @@ inc_left, inc_right = st.columns([3, 2])
 
 with inc_left:
     if health:
-        # Handle both real events (timestamp: float) and synthetic (ts: Timestamp)
-        if "timestamp" in ev:
-            from datetime import datetime as _dt
-            ts_str = _dt.fromtimestamp(float(ev["timestamp"])).strftime("%H:%M:%S")
-        elif "ts" in ev:
-            ts_str = ev["ts"].strftime("%H:%M") if hasattr(ev["ts"], "strftime") else str(ev["ts"])[:16]
-        else:
-            ts_str = "—"
         inc_cls = f"ae-incident-{h_status}" if h_status in ("ok", "warning", "critical") else "ae-incident-unknown"
 
         incident_summary = {
@@ -1018,7 +1011,7 @@ with inc_left:
             f'  <div class="ae-incident-title">{status_emoji(h_status)}&nbsp; {_inc_type}</div>'
             f'  <div class="ae-incident-service">service: {h_svc} / instance: {h_inst}</div>'
             f'  <div class="ae-incident-meta">'
-            f'    {ts_str} &nbsp;·&nbsp; {h_n} samples &nbsp;·&nbsp; anomaly {h_anomaly:.2f}'
+            f'    {fmt_ts(h_ts)} &nbsp;·&nbsp; {h_n} samples &nbsp;·&nbsp; anomaly {h_anomaly:.2f}'
             f'    &nbsp;·&nbsp; {_trend}'
             f'  </div>'
             f'  <div class="ae-incident-body">'
@@ -1127,7 +1120,7 @@ if h_status in ("warning", "critical"):
                 _summary_lines.append("Timeline:")
                 for _ev in _timeline_events:
                     _summary_lines.append(
-                        f"  {_ev.get('timestamp','—')}  [{_ev.get('event_type','')}]  "
+                        f"  {__import__('datetime').datetime.fromtimestamp(float(_ev['timestamp'])).strftime('%H:%M:%S') if _ev.get('timestamp') else '—'}  [{_ev.get('event_type','')}]  "
                         f"{_ev.get('message','')}"
                     )
             st.code("\n".join(_summary_lines), language="text")

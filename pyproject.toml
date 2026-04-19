@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastapi-alertengine"
-version = "1.3.0"
+version = "1.6.0"
 description = "FastAPI AlertEngine: production-ready request monitoring with p95 latency, error rate, Slack alerts, and zero-config instrument() setup."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,6 +17,7 @@ dependencies = [
   "redis",
   "pydantic-settings",
   "httpx",
+  "PyJWT",
 ]
 
 [project.optional-dependencies]
