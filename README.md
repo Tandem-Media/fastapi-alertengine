@@ -267,6 +267,52 @@ This is not a report. It is an operational control system.
 **🐙 [github.com/Tandem-Media/fastapi-alertengine](https://github.com/Tandem-Media/fastapi-alertengine)**
 
 ---
+## 🤖 For AI Agents
+
+fastapi-alertengine was designed from the ground up to be consumed by AI agents, not just humans.
+
+### Stable, typed output — no prompt engineering required
+
+Every `evaluate()` call returns the same schema on every invocation. No optional fields. No varying shapes. No null values to defend against. An agent can call `/health/alerts` and act on the response without any preprocessing.
+
+### The action pipeline is agent-ready
+
+The recovery pipeline — detect → evaluate → suggest → authorize → log — was built for both human and machine authorization. When health degrades, `/actions/suggest` returns a signed JWT action token. An AI agent can receive that token, evaluate the context, and POST to `/action/restart` to execute recovery. The system enforces authorization. It doesn't care whether the authorizing party is a human on WhatsApp or an agent in a loop.
+
+### Designed for agentic monitoring loops
+
+```python
+import httpx
+
+async def monitor(base_url: str):
+    r = await client.get(f"{base_url}/health/alerts")
+    health = r.json()
+
+    if health["health_score"]["score"] < 40:
+        suggestions = await client.get(f"{base_url}/actions/suggest")
+        for action in suggestions.json()["suggestions"]:
+            if action["priority"] == "CRITICAL" and action["token"]:
+                await client.get(
+                    f"{base_url}/action/restart",
+                    params={"token": action["token"]}
+                )
+```
+
+### Key fields for agent consumption
+
+| Field | Type | Description |
+|---|---|---|
+| `health_score.score` | `float` | 0–100 composite score. Below 40 = critical. |
+| `health_score.trend` | `string` | `"improving"` / `"stable"` / `"degrading"` |
+| `alerts[].triggered_by` | `string` | `"absolute_threshold"` / `"adaptive_threshold"` / `"rate_of_change"` |
+| `alerts[].reason_for_trigger` | `string` | Human-readable explanation safe to pass directly to an LLM |
+| `suggestions[].token` | `string` | Signed JWT — pass directly to `/action/restart` |
+| `suggestions[].auto_permitted` | `bool` | Always `false` in v1.6 — agent must explicitly authorize |
+| `rate_of_change` | `array` | Spike events that fired below absolute thresholds |
+
+### Works with Claude Code, Copilot, and Cursor
+
+Clean `__all__` exports, stable schemas, and predictable error shapes make AlertEngine straightforward to instrument from any AI coding assistant. The health endpoint schema is versioned and will not change shape between minor releases.
 
 ## 📄 License
 
