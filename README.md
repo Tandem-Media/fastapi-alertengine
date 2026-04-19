@@ -110,6 +110,42 @@ The system now follows a structured flow:
 
 ## 🏦 Why AlertEngine?
 
+---
+
+### 🧠 Design Philosophy
+
+AlertEngine is not a dashboard replacement.
+
+It is an **operational reasoning layer for high-stakes APIs**.
+
+It focuses on:
+- tail latency (P95, not averages)
+- silent degradation detection
+- fast interpretation under failure conditions
+- minimal overhead on production systems
+
+---
+
+### ⚡ v1.6 Output Contract
+
+Each evaluation returns:
+
+- metrics snapshot
+- health score (0–100)
+- system status
+- alerts (if any)
+- recommended action
+- reasons for classification
+
+---
+
+### 🚀 Why This Matters
+
+Most observability systems tell you what happened.
+
+AlertEngine is designed to tell you:
+
+> what is happening, how bad it is, and what you should do next.
 **Production-grade monitoring in one line — without Prometheus, Grafana, or vendor lock-in.**
 
 Most FastAPI applications fall into one of two traps: they run completely blind, or they bolt on a full Prometheus + Grafana stack that takes days to configure and costs money every month. AlertEngine occupies the gap.
