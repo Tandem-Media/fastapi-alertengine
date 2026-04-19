@@ -1,4 +1,4 @@
-# ⚡ fastapi-alertengine
+#  fastapi-alertengine
 
 **Rugged, self-hosted observability for high-stakes APIs.**
 
@@ -19,10 +19,10 @@ So this was built to do one thing:
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/Tandem-Media/fastapi-alertengine/blob/main/LICENSE)
 [![PyPI Downloads](https://img.shields.io/pypi/dm/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
 
-🔥 **259/259 tests passing**  
-🏦 **Derived from financial infrastructure (AnchorFlow / Tofamba)**  
-🤖 **AI-agent friendly (Claude Code / Copilot / Cursor)**  
-⚡ **Memory mode — runs without Redis**
+ **259/259 tests passing**  
+**Derived from financial infrastructure (AnchorFlow / Tofamba)**  
+ **AI-agent friendly (Claude Code / Copilot / Cursor)**  
+ **Memory mode — runs without Redis**
 
 ---
 
@@ -59,6 +59,54 @@ That's it. Four endpoints are now live:
 | `POST /action/restart` | JWT-gated restart trigger with replay protection |
 
 ---
+## 🧠 v1.6 — Decision & Recovery Layer
+
+fastapi-alertengine has evolved beyond observability.
+
+It now functions as a **real-time decision support system for production APIs**.
+
+Where traditional monitoring tools stop at dashboards, AlertEngine interprets system behavior and produces actionable operational intelligence.
+
+---
+
+### ⚙️ What Changed in v1.6
+
+#### 1. Health Intelligence Layer
+Every request is now evaluated into a single system health score:
+
+- p95 latency deviation
+- error rate impact
+- anomaly patterns
+
+Output:
+- `health_score` (0–100)
+- `health_status` (healthy / degraded / critical)
+- explanation of contributing factors
+
+---
+
+#### 2. Action Recommendation System
+Instead of only alerting, the system now suggests operational responses:
+
+- WARNING → monitor closely
+- HIGH → investigate latency spikes
+- CRITICAL → isolate or restart service
+
+No automatic execution is performed by default—this remains a safe, human-controlled system.
+
+---
+
+#### 3. Incident Replay Capability
+All events are stored in an append-only Redis stream, enabling:
+
+- full incident reconstruction
+- trace-based filtering
+- forensic debugging of failures
+
+---
+
+#### 4. Decision-Oriented Architecture
+The system now follows a structured flow:
 
 ## 🏦 Why AlertEngine?
 
