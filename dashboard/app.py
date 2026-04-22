@@ -906,6 +906,7 @@ if _raw_timeline:
 else:
     _timeline_events = build_incident_timeline(ts_df, ep_df, health)
 
+
 _root_cause = build_root_cause(ep_df, health)
 
 # Only render the section when there is something meaningful to show.
@@ -1118,7 +1119,7 @@ if h_status in ("warning", "critical"):
             if _timeline_events:
                 _summary_lines.append("")
                 _summary_lines.append("Timeline:")
-                for _ev in _timeline_events:
+                for _ev in reversed(_timeline_events):
                     _summary_lines.append(
                         f"  {__import__('datetime').datetime.fromtimestamp(float(_ev['timestamp'])).strftime('%H:%M:%S') if _ev.get('timestamp') else '—'}  [{_ev.get('event_type','')}]  "
                         f"{_ev.get('message','')}"
