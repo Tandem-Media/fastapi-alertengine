@@ -317,3 +317,4 @@ Clean `__all__` exports, stable schemas, and predictable error shapes make Alert
 ## 📄 License
 
 MIT — free to use, modify, and deploy. No strings attached.
+ 
