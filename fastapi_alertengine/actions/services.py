@@ -1,57 +1,50 @@
 # fastapi_alertengine/actions/services.py
 """
-v1.6 — Infrastructure Action Executors
+Service action handlers for the remote-action system.
 
-These functions are called ONLY after a human has authorised an action
-via the JWT confirmation flow. They never auto-execute.
-
-restart_container() is the only action wired in v1.6.
-Replace the implementation with your actual orchestration layer:
-  - Railway: call the Railway GraphQL API
-  - Docker: docker restart <container>
-  - Kubernetes: kubectl rollout restart deployment/<name>
-  - Railway deploy hook: POST to RAILWAY_RESTART_URL env var
-
-The stub below logs the action and returns a detail string.
+restart_container() executes a real docker restart via subprocess.
 """
-import logging
-import os
+import re
+import subprocess
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+_MAX_NAME_LEN = 254
+_VALID_NAME = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9_.\-/]*$')
 
 
 async def restart_container(service: str) -> str:
     """
-    Trigger a service restart.
+    Restart a named service/container via docker restart.
 
-    In production: replace this with your orchestration call.
-    The function must be async and return a detail string on success,
-    or raise an Exception on failure.
-
-    Current implementation: checks for a RAILWAY_RESTART_URL env var
-    and POSTs to it if present, otherwise logs and returns a dry-run message.
+    Raises:
+        ValueError      - invalid service name
+        RuntimeError    - docker exited non-zero, timed out, or not found
     """
-    restart_url = os.getenv("RAILWAY_RESTART_URL")
+    # Validate service name
+    if (
+        not service
+        or len(service) > _MAX_NAME_LEN
+        or not _VALID_NAME.match(service)
+    ):
+        raise ValueError(f"Invalid service name: {service!r}")
 
-    if restart_url:
-        import httpx
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(
-                    restart_url,
-                    headers={"Authorization": f"Bearer {os.getenv('RAILWAY_API_TOKEN', '')}"},
-                    json={"service": service},
-                )
-                resp.raise_for_status()
-                logger.info("restart_container: Railway restart triggered for %s", service)
-                return f"Railway restart triggered for {service} (HTTP {resp.status_code})"
-        except Exception as exc:
-            logger.error("restart_container: Railway restart failed for %s: %s", service, exc)
-            raise
+    try:
+        result = subprocess.run(
+            ["docker", "restart", service],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"docker restart timed out for service {service!r}")
+    except FileNotFoundError:
+        raise RuntimeError("docker not found on PATH")
 
-    # No orchestration configured — dry run
-    logger.warning(
-        "restart_container: RAILWAY_RESTART_URL not set — dry run for service=%s", service
-    )
-    return f"Dry-run: restart action recorded for {service}. Set RAILWAY_RESTART_URL to enable."
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"docker restart exited with code {result.returncode}: {result.stderr.strip()}"
+        )
+
+    container_id = result.stdout.strip()
+    return f"Restarted {service} (container: {container_id})"

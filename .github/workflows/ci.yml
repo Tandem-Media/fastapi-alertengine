@@ -27,7 +27,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install pytest fakeredis httpx anyio
+          pip install pytest fakeredis httpx anyio pytest-asyncio
 
       - name: Run tests
         run: |
