@@ -906,18 +906,31 @@ class AlertEngine:
         action_paths = {getattr(r, "path", "") for r in app.router.routes}
         actions_mounted = "/action/confirm" in action_paths or "/action/restart" in action_paths
 
+        actions_enabled = actions_key and actions_mounted
         print(f"⚡ fastapi-alertengine v1.6.0 ({mode_label} mode)")
+        print(f"  fastapi-alertengine initialized ({mode_label} mode)")
         print("─" * 50)
-        print(f"  Metrics:    ACTIVE")
-        print(f"  Alerts:     ACTIVE")
-        print(f"  Actions:    {'ENABLED' if (actions_key and actions_mounted) else 'DISABLED'}")
-        print(f"  Baseline:   {'ACTIVE' if self.config.baseline_preparation_mode else 'DISABLED'}")
-        print(f"  Learning:   {'ACTIVE' if self.config.baseline_learning_mode else 'DISABLED'}")
-        print(f"  Health:     ACTIVE (weights: lat={self.config.health_weight_latency} "
+        print(f"  Metrics: ACTIVE")
+        print(f"  Alerts: ACTIVE")
+        print(f"  Actions: {'ENABLED' if actions_enabled else 'DISABLED'}")
+        print(f"  Baseline: {'ACTIVE' if self.config.baseline_preparation_mode else 'DISABLED'}")
+        print(f"  Learning: {'ACTIVE' if self.config.baseline_learning_mode else 'DISABLED'}")
+        print(f"  Health: ACTIVE (weights: lat={self.config.health_weight_latency} "
               f"err={self.config.health_weight_errors} "
               f"ano={self.config.health_weight_anomaly})")
-        print(f"  RoC:        ACTIVE (latency≥{self.config.roc_latency_spike_pct:.0f}% "
+        print(f"  Waiting for traffic...")
+        print(f"  fastapi-alertengine initialized")
+        print(f"  /health/alerts")
+        print(f"  /__alertengine/status")
+        print(f"  /metrics/history")
+        print(f"  /metrics/ingestion")
+        print(f"  RoC: ACTIVE (latency≥{self.config.roc_latency_spike_pct:.0f}% "
               f"errors≥{self.config.roc_error_rate_spike_pct:.0f}%)")
+        print(f"  {health_path}")
+        print(f"  /__alertengine/status")
+        print(f"  /metrics/history")
+        print(f"  /metrics/ingestion")
+        print(f"  Waiting for traffic...")
         print()
 
         from .middleware import RequestMetricsMiddleware
@@ -969,9 +982,16 @@ class AlertEngine:
         @app.get("/__alertengine/status", include_in_schema=False)
         def _status():
             ap = {getattr(r, "path", "") for r in app.router.routes}
+            act_mounted = "/action/confirm" in ap or "/action/restart" in ap
             return {
                 "version":              "1.6.0",
                 "mode":                 "memory" if engine._memory_mode else "redis",
+                "metrics_active":       True,
+                "alerts_active":        True,
+                "actions_enabled":      bool(__import__("os").getenv("ACTION_SECRET_KEY")),
+                "metrics_active":       True,
+                "alerts_active":        True,
+                "actions_enabled":      bool(os.getenv("ACTION_SECRET_KEY")) and act_mounted,
                 "ingestion":            engine.get_ingestion_stats(),
                 "circuit_breaker":      engine.get_circuit_breaker_status(),
                 "baseline_mode":        engine.config.baseline_preparation_mode,
