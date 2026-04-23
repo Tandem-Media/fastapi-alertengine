@@ -16,6 +16,7 @@ from typing import Optional
 import jwt
 
 _ALG = "HS256"
+_ALGORITHM = _ALG
 _DEFAULT_TTL = 90  # seconds
 
 
