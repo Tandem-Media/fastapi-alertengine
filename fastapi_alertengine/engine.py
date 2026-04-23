@@ -918,7 +918,7 @@ class AlertEngine:
               f"err={self.config.health_weight_errors} "
               f"ano={self.config.health_weight_anomaly})")
         print(f"  Waiting for traffic...")
-        print(f"  fastapi-alertengine initialized")
+        print(f"  fastapi-alertengine initialized ({mode_label} mode)")
         print(f"  /health/alerts")
         print(f"  /__alertengine/status")
         print(f"  /metrics/history")
