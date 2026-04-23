@@ -17,8 +17,9 @@ import jwt
 
 _ALG = "HS256"
 _ALGORITHM = _ALG
-_TOKEN_TTL_SECONDS = _DEFAULT_TTL
 _DEFAULT_TTL = 90  # seconds
+_TOKEN_TTL_SECONDS = _DEFAULT_TTL
+
 
 
 def _secret() -> str:
