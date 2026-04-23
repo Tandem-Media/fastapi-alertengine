@@ -908,7 +908,6 @@ class AlertEngine:
 
         actions_enabled = actions_key and actions_mounted
         print(f"⚡ fastapi-alertengine v1.6.0 ({mode_label} mode)")
-        print(f"  fastapi-alertengine initialized ({mode_label} mode)")
         print("─" * 50)
         print(f"  Metrics: ACTIVE")
         print(f"  Alerts: ACTIVE")
@@ -988,10 +987,9 @@ class AlertEngine:
                 "mode":                 "memory" if engine._memory_mode else "redis",
                 "metrics_active":       True,
                 "alerts_active":        True,
-                "actions_enabled":      bool(__import__("os").getenv("ACTION_SECRET_KEY")),
+                "actions_enabled":      "/action/confirm" in {getattr(r, "path", "") for r in app.router.routes},
                 "metrics_active":       True,
                 "alerts_active":        True,
-                "actions_enabled":      bool(os.getenv("ACTION_SECRET_KEY")) and act_mounted,
                 "ingestion":            engine.get_ingestion_stats(),
                 "circuit_breaker":      engine.get_circuit_breaker_status(),
                 "baseline_mode":        engine.config.baseline_preparation_mode,
