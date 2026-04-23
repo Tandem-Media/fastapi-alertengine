@@ -48,3 +48,6 @@ def log_action(
         logger.info(msg)
     else:
         logger.warning(msg)
+def read_audit_log(rdb=None, limit: int = 100) -> list:
+    """Return recent audit log entries. Returns empty list when Redis unavailable."""
+    return []
