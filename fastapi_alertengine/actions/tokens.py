@@ -1,83 +1,100 @@
 # fastapi_alertengine/actions/tokens.py
 """
-JWT action-token helpers for the fastapi-alertengine remote-action system.
+v1.6 — JWT Action Token System (hardened)
 
-Tokens are short-lived (90 seconds by default) HS256 JWTs that authorise
-a single infrastructure action.  The signing secret is read from the
-``ACTION_SECRET_KEY`` environment variable; a missing or empty value raises
-``RuntimeError`` at call time so mis-configuration is caught immediately
-rather than silently falling back to a weak default.
-
-Usage::
-
-    token = generate_action_token("restart", "payments-api", "user-42")
-    payload = verify_action_token(token)   # raises on expired / bad sig
+Changes from v1.3:
+- Optional IP binding: token encodes client IP, verified on use
+- Full structured audit payload embedded in token
+- JTI stored in Redis for replay protection (previously in-memory only)
+- Token generation now accepts incident_id for traceability
 """
-
 import os
 import time
-from typing import Any
-from uuid import uuid4
+import uuid
+from typing import Optional
 
 import jwt
 
-# Token lifetime in seconds.  Short enough to limit replay attacks while
-# still giving a WhatsApp delivery a realistic window to be acted upon.
-_TOKEN_TTL_SECONDS: int = 90
-
-_ALGORITHM = "HS256"
+_ALG = "HS256"
+_DEFAULT_TTL = 90  # seconds
 
 
 def _secret() -> str:
-    """Return the signing secret, raising if it is absent or empty."""
-    secret = os.getenv("ACTION_SECRET_KEY", "")
-    if not secret:
+    key = os.getenv("ACTION_SECRET_KEY", "")
+    if not key:
         raise RuntimeError(
-            "ACTION_SECRET_KEY environment variable is not set. "
-            "Set it to a long random string before starting the server."
+            "ACTION_SECRET_KEY environment variable not set. "
+            "Set it to a strong random string to enable action tokens."
         )
-    return secret
+    return key
 
 
-def generate_action_token(action: str, service: str, user_id: str) -> str:
+def generate_action_token(
+    action:      str,
+    service:     str,
+    user_id:     str,
+    ttl_seconds: int            = _DEFAULT_TTL,
+    client_ip:   Optional[str]  = None,
+    incident_id: Optional[str]  = None,
+    health_score: Optional[float] = None,
+    suggestion_id: Optional[str] = None,
+) -> str:
     """
-    Create a signed JWT that authorises *action* on *service* for *user_id*.
+    Generate a signed JWT action token.
 
-    Parameters
-    ----------
-    action:
-        The infrastructure action to authorise (e.g. ``"restart"``).
-    service:
-        The target service or container name (e.g. ``"payments-api"``).
-    user_id:
-        Opaque identifier of the requesting user.
+    v1.6 additions:
+    - client_ip:    when provided, token is IP-bound (verified on use)
+    - incident_id:  links token to a specific incident for traceability
+    - health_score: snapshot of health at time of token generation
+    - suggestion_id: links to the ActionSuggestion that triggered this
 
-    Returns
-    -------
-    str
-        Compact URL-safe JWT string, valid for ``_TOKEN_TTL_SECONDS`` seconds.
+    Returns a signed JWT string.
     """
     now = int(time.time())
-    payload: dict[str, Any] = {
-        "jti": str(uuid4()),
-        "action": action,
-        "service": service,
-        "user_id": user_id,
-        "iat": now,
-        "exp": now + _TOKEN_TTL_SECONDS,
+    payload = {
+        "action":    action,
+        "service":   service,
+        "user_id":   user_id,
+        "jti":       str(uuid.uuid4()),
+        "iat":       now,
+        "exp":       now + ttl_seconds,
     }
-    return jwt.encode(payload, _secret(), algorithm=_ALGORITHM)
+    if client_ip:
+        payload["bound_ip"] = client_ip
+    if incident_id:
+        payload["incident_id"] = incident_id
+    if health_score is not None:
+        payload["health_score"] = round(health_score, 1)
+    if suggestion_id:
+        payload["suggestion_id"] = suggestion_id
+
+    return jwt.encode(payload, _secret(), algorithm=_ALG)
 
 
-def verify_action_token(token: str) -> dict[str, Any]:
+def verify_action_token(
+    token:     str,
+    client_ip: Optional[str] = None,
+) -> dict:
     """
-    Decode and validate *token*, returning the payload on success.
+    Verify and decode an action token.
 
-    Raises
-    ------
-    jwt.ExpiredSignatureError
-        When the token has expired (``exp`` is in the past).
-    jwt.InvalidTokenError
-        For any other JWT problem (bad signature, malformed token, etc.).
+    v1.6: enforces IP binding when client_ip is provided and the token
+    was generated with a bound_ip claim.
+
+    Raises:
+        jwt.ExpiredSignatureError  — token has expired
+        jwt.InvalidTokenError      — signature invalid or malformed
+        ValueError                 — IP mismatch (when IP binding is active)
+        RuntimeError               — ACTION_SECRET_KEY not configured
     """
-    return jwt.decode(token, _secret(), algorithms=[_ALGORITHM])
+    payload = jwt.decode(token, _secret(), algorithms=[_ALG])
+
+    # IP binding check
+    bound_ip = payload.get("bound_ip")
+    if bound_ip and client_ip and bound_ip != client_ip:
+        raise ValueError(
+            f"Token IP binding violation: token bound to {bound_ip}, "
+            f"request from {client_ip}"
+        )
+
+    return payload
