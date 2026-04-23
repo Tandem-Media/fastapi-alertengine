@@ -1,13 +1,20 @@
 # fastapi_alertengine/storage.py
 """
 Redis Streams read/write for request metrics, plus aggregation helpers.
+
+v1.4 changes:
+- _build_fields: now persists route_template and trace_id when present
+- write_baseline_snapshot: new function for baseline preparation mode
+- read_baseline_snapshots: new function for v1.5 threshold calibration
+- All existing functions unchanged — fully backward compatible
 """
 import json as _json
 import logging
+import time as _time
 from typing import List, Optional
 
 from .config import AlertConfig
-from .schemas import RequestMetricEvent
+from .schemas import BaselineSnapshot, RequestMetricEvent
 
 logger = logging.getLogger(__name__)
 
@@ -17,15 +24,34 @@ def _classify(path: str) -> str:
 
 
 def _build_fields(config: AlertConfig, metric: dict) -> dict:
-    return {
-        "path":         metric["path"],
+    """
+    Build the Redis hash fields for a request metric event.
+
+    v1.4: route_template and trace_id are stored when present.
+    The raw path is preserved for backward compatibility — consumers
+    that already read "path" will continue to work unchanged.
+    route_template is stored as a separate field so analytics can
+    group by template without touching existing path consumers.
+    """
+    fields = {
+        "path":         metric["path"],           # raw path (backward compat)
         "method":       str(metric["method"]).upper(),
         "status":       str(metric["status_code"]),
         "latency_ms":   f"{metric['latency_ms']:.3f}",
-        "type":         _classify(metric["path"]),
+        "type":         _classify(metric.get("route_template") or metric["path"]),
         "service_name": metric.get("service_name", config.service_name),
         "instance_id":  metric.get("instance_id",  config.instance_id),
     }
+    # v1.4 enrichment — stored only when present, never stored as empty string
+    route_template = metric.get("route_template")
+    if route_template and route_template != metric["path"]:
+        fields["route_template"] = route_template
+
+    trace_id = metric.get("trace_id")
+    if trace_id:
+        fields["trace_id"] = trace_id[:128]  # cap stored length
+
+    return fields
 
 
 def write_metric(rdb, config: AlertConfig, metric: dict) -> None:
@@ -120,7 +146,11 @@ def read_aggregates(rdb, config: AlertConfig, service: str, last_n_buckets: int 
 
 
 def read_metrics(rdb, config: AlertConfig, last_n: int) -> List[RequestMetricEvent]:
-    """Read the most recent *last_n* events. Returns [] on any error."""
+    """
+    Read the most recent *last_n* events from Redis Stream.
+
+    v1.4: populates route_template and trace_id when stored.
+    """
     try:
         raw = rdb.xrevrange(config.stream_key, count=last_n)
     except Exception as exc:
@@ -130,11 +160,14 @@ def read_metrics(rdb, config: AlertConfig, last_n: int) -> List[RequestMetricEve
     for _sid, fields in raw:
         try:
             events.append(RequestMetricEvent(
-                path        = fields.get("path", ""),
-                method      = fields.get("method", ""),
-                status_code = int(fields.get("status", 0)),
-                latency_ms  = float(fields.get("latency_ms", 0.0)),
-                type        = fields.get("type", "api"),
+                path           = fields.get("path", ""),
+                method         = fields.get("method", ""),
+                status_code    = int(fields.get("status", 0)),
+                latency_ms     = float(fields.get("latency_ms", 0.0)),
+                type           = fields.get("type", "api"),
+                # v1.4 enrichment — None if not stored
+                route_template = fields.get("route_template") or None,
+                trace_id       = fields.get("trace_id") or None,
             ))
         except (ValueError, TypeError):
             continue
@@ -165,23 +198,15 @@ def _bucket(values: List[float]) -> dict:
     return {"p95_ms": _p95(values), "count": len(values)}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Incident event store — real append-only timeline backed by Redis ZSET
-# ─────────────────────────────────────────────────────────────────────────────
-import time as _time
+# ── Incident event store ───────────────────────────────────────────────────────
 
-_INCIDENT_TTL_SECONDS = 86_400   # 24 hours
-_INCIDENT_MAX_EVENTS  = 500      # cap per service
+_INCIDENT_TTL_SECONDS = 86_400
+_INCIDENT_MAX_EVENTS  = 500
 
 
 def write_incident_event(rdb, config, event: dict) -> None:
     """
     Append a real incident event to the Redis ZSET for this service.
-
-    Key  : alertengine:incidents:{service}
-    Score: unix timestamp (float)
-    Value: JSON-encoded event dict
-
     Never raises — a Redis outage must not break the eval loop.
     """
     try:
@@ -204,10 +229,7 @@ def read_incident_events(
     since: float = 0.0,
     limit: int = 50,
 ) -> list:
-    """
-    Read incident events for *service* recorded after *since* (unix ts).
-    Returns a list of dicts sorted oldest-first. Returns [] on any error.
-    """
+    """Read incident events for *service* recorded after *since* (unix ts)."""
     try:
         key  = f"alertengine:incidents:{service}"
         raw  = rdb.zrangebyscore(key, since, "+inf", start=0, num=limit, withscores=True)
@@ -222,4 +244,64 @@ def read_incident_events(
         return events
     except Exception as exc:
         logger.warning("read_incident_events failed: %s", exc)
+        return []
+
+
+# ── v1.4: Baseline snapshot store ─────────────────────────────────────────────
+
+_BASELINE_KEY_PREFIX  = "alertengine:baseline"
+_BASELINE_TTL_SECONDS = 86_400 * 7   # 7 days — covers weekly patterns
+_BASELINE_MAX_ENTRIES = 1_440         # 24h at 1/min
+
+
+def write_baseline_snapshot(rdb, config: AlertConfig, snapshot: BaselineSnapshot) -> None:
+    """
+    Persist one baseline snapshot to a Redis ZSET for the service.
+
+    Key  : alertengine:baseline:{service}
+    Score: unix timestamp
+    Value: JSON-encoded snapshot dict
+
+    Data collection only — no threshold adjustment in v1.4.
+    Never raises.
+    """
+    try:
+        key   = f"{_BASELINE_KEY_PREFIX}:{snapshot.service}"
+        score = snapshot.timestamp
+        value = _json.dumps(snapshot.as_dict())
+        pipe  = rdb.pipeline(transaction=False)
+        pipe.zadd(key, {value: score})
+        # Cap at max entries (remove oldest first)
+        pipe.zremrangebyrank(key, 0, -(_BASELINE_MAX_ENTRIES + 1))
+        pipe.expire(key, _BASELINE_TTL_SECONDS)
+        pipe.execute()
+    except Exception as exc:
+        logger.warning("write_baseline_snapshot failed: %s", exc)
+
+
+def read_baseline_snapshots(
+    rdb,
+    config: AlertConfig,
+    service: str,
+    last_n: int = 60,
+) -> List[dict]:
+    """
+    Read the most recent *last_n* baseline snapshots for *service*.
+    Returns [] on any error.
+    Used by v1.5 adaptive threshold calibration.
+    """
+    try:
+        key = f"{_BASELINE_KEY_PREFIX}:{service}"
+        raw = rdb.zrevrange(key, 0, last_n - 1, withscores=True)
+        results = []
+        for member, score in raw:
+            try:
+                snap = _json.loads(member)
+                snap.setdefault("timestamp", score)
+                results.append(snap)
+            except Exception:
+                continue
+        return results
+    except Exception as exc:
+        logger.warning("read_baseline_snapshots failed: %s", exc)
         return []
