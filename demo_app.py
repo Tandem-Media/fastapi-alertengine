@@ -13,26 +13,25 @@ Flow:
 Run:
     pip install fastapi uvicorn redis fastapi-alertengine twilio python-dotenv httpx
     cp .env.example .env   # fill in your credentials
-    docker run -p 6379:6379 redis
-    uvicorn demo_app:app --reload
+    redis-server
+    uvicorn demo_app:app --no-access-log
     python load.py          # in a second terminal
 
-Expose publicly for WhatsApp tap-to-recover:
-    ngrok http 8000         # set BASE_URL=https://xxxx.ngrok.io in .env
+Open simulator at: http://localhost:8000/sim/whatsapp_sim.html
 """
 
 import asyncio
 import logging
 import os
 import random
-from contextlib import asynccontextmanager
 
-import redis
 from dotenv import load_dotenv
 from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
+from fastapi_alertengine import instrument
 from whatsapp_alert import send_critical_alert, send_recovery_message
 
 load_dotenv()
@@ -41,13 +40,6 @@ logger = logging.getLogger("demo")
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
-# ── AlertEngine setup ──────────────────────────────────────────────────────────
-redis_client = redis.Redis.from_url(
-    os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"),
-    decode_responses=True,
-)
-engine = get_alert_engine(redis_client=redis_client)
-
 # ── Failure switch ─────────────────────────────────────────────────────────────
 _FAIL: dict = {
     "enabled":       False,
@@ -55,21 +47,33 @@ _FAIL: dict = {
     "error_rate":    0.0,
 }
 
-# ── Alert state (prevents repeated alerts) ────────────────────────────────────
+# ── Alert state ────────────────────────────────────────────────────────────────
 _ALERT: dict = {
-    "sent":            False,   # critical alert sent
-    "recovery_sent":   False,   # recovery message sent
-    "last_status":     None,
+    "sent":          False,
+    "recovery_sent": False,
+    "last_status":   None,
 }
+
+# ── App setup ──────────────────────────────────────────────────────────────────
+app = FastAPI(title="AlertEngine Demo")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+engine = instrument(app, health_path="/health/alerts")
+
+# Serve whatsapp_sim.html at http://localhost:8000/sim/whatsapp_sim.html
+app.mount("/sim", StaticFiles(directory=".", html=True), name="sim")
+
 
 # ── Background health monitor ──────────────────────────────────────────────────
 
 async def _monitor_loop():
-    """
-    Polls health every 5 seconds. Sends WhatsApp on critical,
-    sends recovery message when health returns to normal.
-    """
-    await asyncio.sleep(10)   # let the app warm up first
+    await asyncio.sleep(15)   # let baseline build first
     logger.info("Health monitor started — polling every 5s")
 
     while True:
@@ -83,35 +87,31 @@ async def _monitor_loop():
             p95    = m.get("overall_p95_ms", 0)
             err    = m.get("error_rate", 0)
 
+            logger.info("Health: score=%.0f status=%s p95=%.0fms err=%.1f%%",
+                        score, status, p95, err * 100)
+
             if status == "critical" and not _ALERT["sent"]:
                 _ALERT["sent"]          = True
                 _ALERT["recovery_sent"] = False
-
-                # Build confirm URL — uses AlertEngine's action token
                 confirm_url = f"{BASE_URL}/action/recover?token=demo-confirm"
-
-                logger.warning(
-                    "CRITICAL detected — score=%.0f trend=%s — sending WhatsApp",
-                    score, trend,
-                )
+                logger.warning("CRITICAL — sending WhatsApp alert")
                 sent = send_critical_alert(
-                    health_score = score,
-                    p95_ms       = p95,
-                    error_rate   = err,
-                    trend        = trend,
-                    confirm_url  = confirm_url,
+                    health_score=score,
+                    p95_ms=p95,
+                    error_rate=err,
+                    trend=trend,
+                    confirm_url=confirm_url,
                 )
                 if not sent:
-                    logger.info("WhatsApp not configured — alert would have been sent here.")
+                    logger.info("(WhatsApp not configured — would have sent alert here)")
 
             elif status in ("healthy", "degraded") and _ALERT["sent"] and not _ALERT["recovery_sent"]:
                 _ALERT["recovery_sent"] = True
                 _ALERT["sent"]          = False
-
-                logger.info("System recovered — score=%.0f — sending recovery message", score)
+                logger.info("RECOVERED — sending WhatsApp recovery message")
                 sent = send_recovery_message(health_score=score)
                 if not sent:
-                    logger.info("WhatsApp not configured — recovery message would have been sent here.")
+                    logger.info("(WhatsApp not configured — would have sent recovery here)")
 
             _ALERT["last_status"] = status
 
@@ -121,23 +121,15 @@ async def _monitor_loop():
         await asyncio.sleep(5)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_monitor_loop())
-    yield
-    task.cancel()
-
-
-# ── App ────────────────────────────────────────────────────────────────────────
-app = FastAPI(title="AlertEngine Demo", lifespan=lifespan)
-app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
+@app.on_event("startup")
+async def _start_monitor():
+    asyncio.create_task(_monitor_loop())
 
 
 # ── Core payment endpoint ──────────────────────────────────────────────────────
 
 @app.get("/api/payments/process")
 async def process_payment():
-    """Simulates a payment processor. Degrades when fail mode is active."""
     latency = random.uniform(0.05, 0.15) + _FAIL["latency_boost"]
     await asyncio.sleep(latency)
 
@@ -147,59 +139,46 @@ async def process_payment():
             content={"status": "error", "message": "Payment provider timeout"},
         )
 
-    return {"status": "success", "message": "Payment processed", "latency_ms": round(latency * 1000)}
-
-
-# ── Health ─────────────────────────────────────────────────────────────────────
-
-@app.get("/health/alerts")
-def health():
-    return engine.evaluate()
+    return {
+        "status":     "success",
+        "message":    "Payment processed",
+        "latency_ms": round(latency * 1000),
+    }
 
 
 # ── Demo controls ──────────────────────────────────────────────────────────────
 
 @app.post("/demo/fail")
 def trigger_failure():
-    """Full failure — high latency + high error rate."""
     _FAIL.update({"enabled": True, "latency_boost": 1.2, "error_rate": 0.5})
-    _ALERT["sent"] = False   # allow new alert
+    _ALERT["sent"] = False
     logger.warning("FAIL MODE ENABLED")
     return {
         "status":  "FAIL MODE ENABLED",
-        "message": "Watch /health/alerts — score will drop within 30s. WhatsApp alert incoming.",
+        "message": "Score will drop within 60s. Watch the simulator.",
     }
 
 
 @app.post("/demo/degrade")
 def degrade_only():
-    """Soft degradation — latency only, no errors."""
     _FAIL.update({"enabled": True, "latency_boost": 0.7, "error_rate": 0.0})
-    logger.warning("DEGRADED MODE ENABLED")
+    logger.warning("DEGRADED MODE")
     return {"status": "DEGRADED MODE", "message": "Latency degraded. Watch for RoC alert."}
 
 
 @app.post("/demo/recover")
 def recover():
-    """Manual recovery — resets all failure flags."""
     _FAIL.update({"enabled": False, "latency_boost": 0.0, "error_rate": 0.0})
     logger.info("SYSTEM RECOVERED (manual)")
-    return {"status": "RECOVERED", "message": "System restored. Score will rise within 30s."}
+    return {"status": "RECOVERED", "message": "Score will rise within 60s."}
 
 
-# ── Tap-to-recover endpoint (WhatsApp link target) ─────────────────────────────
+# ── Tap-to-recover (WhatsApp link target) ──────────────────────────────────────
 
 @app.get("/action/recover", response_class=HTMLResponse)
 def recover_from_whatsapp(token: str = Query(None)):
-    """
-    The URL sent in the WhatsApp message. User taps it on their phone,
-    this endpoint fires, system recovers.
-
-    In production: validate the JWT token before recovering.
-    For demo: any token is accepted.
-    """
     _FAIL.update({"enabled": False, "latency_boost": 0.0, "error_rate": 0.0})
-    logger.info("SYSTEM RECOVERED via WhatsApp tap (token=%s)", token)
+    logger.info("RECOVERED via WhatsApp tap (token=%s)", token)
 
     return HTMLResponse(content="""<!DOCTYPE html>
 <html lang="en">
@@ -213,9 +192,9 @@ def recover_from_whatsapp(token: str = Query(None)):
            min-height:100vh; margin:0; }
     .card { text-align:center; padding:40px; max-width:360px; }
     .icon { font-size:64px; margin-bottom:16px; }
-    h1 { font-size:24px; margin:0 0 8px; color:#f8fafc; }
-    p  { color:#94a3b8; margin:0 0 24px; }
-    .score { font-size:48px; font-weight:700; color:#16a34a; }
+    h1   { font-size:24px; margin:0 0 8px; color:#f8fafc; }
+    p    { color:#94a3b8; margin:0 0 24px; }
+    .score { font-size:64px; font-weight:700; color:#16a34a; }
     .label { font-size:14px; color:#64748b; margin-top:4px; }
   </style>
 </head>
@@ -225,7 +204,7 @@ def recover_from_whatsapp(token: str = Query(None)):
     <h1>Recovery Authorised</h1>
     <p>System is stabilising. Health score rising.</p>
     <div class="score" id="score">–</div>
-    <div class="label">Current health score</div>
+    <div class="label">Current health score / 100</div>
   </div>
   <script>
     async function refresh() {
@@ -233,7 +212,7 @@ def recover_from_whatsapp(token: str = Query(None)):
         const r = await fetch('/health/alerts');
         const d = await r.json();
         const s = d?.health_score?.score;
-        if (s != null) document.getElementById('score').textContent = s.toFixed(0);
+        if (s != null) document.getElementById('score').textContent = Math.round(s);
       } catch(e) {}
     }
     refresh();
@@ -252,15 +231,15 @@ def demo_panel():
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AlertEngine Demo Control</title>
+  <title>AlertEngine Demo</title>
   <style>
     * { box-sizing:border-box; margin:0; padding:0; }
     body { background:#0f172a; color:#e2e8f0; font-family:system-ui,sans-serif;
            display:flex; flex-direction:column; align-items:center;
            min-height:100vh; padding:40px 20px; }
-    h1 { font-size:24px; margin-bottom:4px; color:#f8fafc; }
+    h1   { font-size:24px; margin-bottom:4px; color:#f8fafc; }
     .sub { color:#64748b; margin-bottom:32px; font-size:14px; }
-    a { color:#38bdf8; }
+    a    { color:#38bdf8; }
     .btn { display:block; width:340px; padding:16px; margin:10px 0;
            border:none; border-radius:10px; font-size:16px; font-weight:600;
            cursor:pointer; transition:opacity .15s; }
@@ -268,29 +247,32 @@ def demo_panel():
     .fail    { background:#dc2626; color:#fff; }
     .degrade { background:#d97706; color:#fff; }
     .recover { background:#16a34a; color:#fff; }
-    .out { background:#1e293b; padding:16px; border-radius:10px; margin-top:24px;
-           font-family:monospace; font-size:13px; width:340px; min-height:60px;
-           color:#94a3b8; white-space:pre-wrap; }
-    .health { background:#1e293b; border-radius:10px; padding:16px;
-              margin-top:16px; width:340px; font-family:monospace; font-size:13px; }
-    .score-big { font-size:48px; font-weight:700; text-align:center;
-                 margin:8px 0 4px; }
-    .trend { text-align:center; font-size:13px; color:#64748b; }
+    .health  { background:#1e293b; border-radius:10px; padding:20px;
+               margin-top:20px; width:340px; text-align:center; }
+    .score-big { font-size:64px; font-weight:700; margin:8px 0 4px; }
+    .trend     { font-size:13px; color:#64748b; }
     .green  { color:#16a34a; }
     .yellow { color:#d97706; }
     .red    { color:#dc2626; }
+    .out { background:#1e293b; padding:16px; border-radius:10px; margin-top:16px;
+           font-family:monospace; font-size:12px; width:340px; min-height:48px;
+           color:#94a3b8; white-space:pre-wrap; }
   </style>
 </head>
 <body>
   <h1>⚡ AlertEngine Demo</h1>
-  <div class="sub">Control panel — <a href="/health/alerts" target="_blank">/health/alerts</a></div>
+  <div class="sub">
+    <a href="/health/alerts" target="_blank">/health/alerts</a> ·
+    <a href="/sim/whatsapp_sim.html" target="_blank">📱 WhatsApp Simulator</a> ·
+    <a href="/docs" target="_blank">API docs</a>
+  </div>
 
   <button class="btn degrade" onclick="post('/demo/degrade')">🟡 Degrade — Latency Only</button>
   <button class="btn fail"    onclick="post('/demo/fail')">🔴 Full Failure — Latency + Errors</button>
   <button class="btn recover" onclick="post('/demo/recover')">🟢 Recover — Reset System</button>
 
   <div class="health">
-    <div class="score-big" id="score">–</div>
+    <div class="score-big green" id="score">–</div>
     <div class="trend" id="trend">loading...</div>
   </div>
 
@@ -298,22 +280,23 @@ def demo_panel():
 
   <script>
     async function post(url) {
-      const r = await fetch(url, { method:'POST' });
+      const r = await fetch(url, { method: 'POST' });
       const d = await r.json();
       document.getElementById('out').textContent = JSON.stringify(d, null, 2);
     }
 
     async function pollHealth() {
       try {
-        const r = await fetch('/health/alerts');
-        const d = await r.json();
+        const r  = await fetch('/health/alerts');
+        const d  = await r.json();
         const hs = d?.health_score || {};
-        const score = hs.score != null ? hs.score.toFixed(0) : '–';
+        const score  = hs.score  != null ? Math.round(hs.score) : '–';
         const status = hs.status || 'unknown';
         const trend  = hs.trend  || '–';
         const el = document.getElementById('score');
         el.textContent = score;
-        el.className = 'score-big ' + (status === 'healthy' ? 'green' : status === 'critical' ? 'red' : 'yellow');
+        el.className   = 'score-big ' +
+          (status === 'healthy' ? 'green' : status === 'critical' ? 'red' : 'yellow');
         document.getElementById('trend').textContent = `${status} · ${trend}`;
       } catch(e) {}
     }

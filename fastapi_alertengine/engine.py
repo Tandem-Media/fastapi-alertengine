@@ -572,19 +572,59 @@ class AlertEngine:
         try:
             raw = self.redis.xrevrange(self.config.stream_key, count=last_n)
         except Exception:
+            raw = []
+        if raw:
+            events = []
+            for _, f in raw:
+                try:
+                    events.append({
+                        "latency_ms":  float(f.get("latency_ms", 0)),
+                        "type":        f.get("type", "api"),
+                        "status_code": int(f.get("status", 0)),
+                        "route":       f.get("route_template") or f.get("path", ""),
+                    })
+                except Exception:
+                    continue
+            return events
+        # Fall back to aggregate buckets when stream is empty
+        try:
+            import json as _json
+            now = int(time.time())
+            window_start = now - 300
+            keys = self.redis.keys("alertengine:agg:*")
+            events = []
+            for key in keys:
+                try:
+                    parts = key.split(":")
+                    bucket_ts = int(parts[-1])
+                    if bucket_ts < window_start:
+                        continue
+                    data = self.redis.hgetall(key)
+                    for field, val in data.items():
+                        try:
+                            d = _json.loads(val)
+                            count = int(d.get("c", 0))
+                            total = float(d.get("t", 0))
+                            field_parts = field.split("|")
+                            status_group = field_parts[2] if len(field_parts) > 2 else "2xx"
+                            status_code = 500 if "5xx" in status_group else 200
+                            avg_lat = total / count if count > 0 else 0
+                            for _ in range(min(count, 50)):
+                                events.append({
+                                    "latency_ms":  avg_lat,
+                                    "type":        "api",
+                                    "status_code": status_code,
+                                    "route":       field_parts[0] if field_parts else "",
+                                })
+                        except Exception:
+                            continue
+                except (ValueError, IndexError):
+                    continue
+                except Exception:
+                    continue
+            return events[-last_n:] if len(events) > last_n else events
+        except Exception:
             return []
-        events = []
-        for _, f in raw:
-            try:
-                events.append({
-                    "latency_ms":  float(f.get("latency_ms", 0)),
-                    "type":        f.get("type", "api"),
-                    "status_code": int(f.get("status", 0)),
-                    "route":       f.get("route_template") or f.get("path", ""),
-                })
-            except Exception:
-                continue
-        return events
 
     @staticmethod
     def _percentile(values: list, pct: float) -> float:
