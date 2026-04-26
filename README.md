@@ -1,9 +1,9 @@
 # ⚡ fastapi-alertengine
 
-**Rugged, self-hosted observability for high-stakes FastAPI systems.**
+**Fix your API in production in under 30 seconds — from your phone.**
 
 When a critical endpoint starts failing, dashboards don't help.  
-You need to **know immediately — and act before it costs you money.**
+You need to **know immediately — and act.**
 
 ---
 
@@ -14,11 +14,25 @@ You need to **know immediately — and act before it costs you money.**
 
 ---
 
+## 📱 See It In Action
+
+**Healthy → Failure → Alert on your phone → Tap → Recovered**
+
+<p align="center">
+  <img src="docs/demo_alert.png" width="340" alt="Critical WhatsApp alert — health score 54/100, P95 1311ms, error rate 25%, Confirm Restart button">
+  &nbsp;&nbsp;
+  <img src="docs/demo_recovery.png" width="340" alt="After tapping Confirm — Restart authorised, recovery in progress">
+</p>
+
+> Built on a live payment processing system. Alert fires within 60 seconds of degradation. Recovery is one tap.
+
+---
+
 ## 🧠 Why This Exists
 
 AlertEngine was built for systems under real pressure — not dashboards.
 
-While building a mobile-money orchestration platform, I needed monitoring that:
+While building **AnchorFlow**, a payment orchestration platform on mobile money rails in Zimbabwe, I needed monitoring that:
 
 - Never crashes the request path
 - Doesn't depend on external SaaS
@@ -28,17 +42,7 @@ So instead of paying $400/month for slow tooling, I built an **embedded stabilit
 
 **Goal:** Reduce MTTR from minutes of panic → seconds of controlled action.
 
----
-
-## ⚡ How It Compares
-
-| Feature | Datadog / Sentry | Prometheus / Grafana | ⚡ AlertEngine |
-|---|---|---|---|
-| Setup | ~30 mins + config | Days (infra + YAML) | < 2 mins (middleware) |
-| Cost | $50–$500/month | Infra + maintenance | $0 (self-hosted) |
-| Primary Output | Dashboards & alerts | Raw metrics & graphs | Actionable decisions |
-| Architecture | External (SaaS) | Sidecar / distributed | Embedded (in-process) |
-| Actionability | ❌ Observe only | ❌ Interpret yourself | ✅ Suggests next action |
+The system enters the **Central Bank of Zimbabwe regulatory sandbox in May 2026** — where zero-failure assumptions get tested against real conditions.
 
 ---
 
@@ -50,19 +54,10 @@ pip install fastapi-alertengine
 
 ```python
 from fastapi import FastAPI
-import redis
-from fastapi_alertengine import RequestMetricsMiddleware, get_alert_engine
+from fastapi_alertengine import instrument
 
 app = FastAPI()
-
-redis_client = redis.Redis.from_url("redis://localhost:6379/0")
-engine = get_alert_engine(redis_client=redis_client)
-
-app.add_middleware(RequestMetricsMiddleware, alert_engine=engine)
-
-@app.get("/health/alerts")
-def health():
-    return engine.evaluate()
+engine = instrument(app)
 ```
 
 Done. You now have a live observability + recovery pipeline.
@@ -74,12 +69,24 @@ Done. You now have a live observability + recovery pipeline.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health/alerts` | P95 latency, error rate, health score |
-| `GET /incidents/timeline` | Append-only incident log |
+| `GET /incidents/timeline` | Append-only incident log (Redis ZSET) |
 | `GET /incidents/replay` | Full trace reconstruction |
 | `GET /actions/suggest` | Recovery actions (JWT signed) |
 | `GET /actions/audit` | Audit log of every action attempt |
 | `GET /intelligence/health` | Health breakdown + trend direction |
 | `GET /pipeline/status` | detect → evaluate → suggest → authorize → log |
+
+---
+
+## 🏦 The $0 SaaS Tax Strategy
+
+| Feature | Datadog / Sentry | Prometheus / Grafana | ⚡ AlertEngine |
+|---|---|---|---|
+| Setup | ~30 mins + config | Days (infra + YAML) | < 2 mins (middleware) |
+| Cost | $50–$500/month | Infra + maintenance | $0 (self-hosted) |
+| Primary Output | Dashboards & alerts | Raw metrics & graphs | Actionable decisions |
+| Architecture | External (SaaS) | Sidecar / distributed | Embedded (in-process) |
+| Actionability | ❌ Observe only | ❌ Interpret yourself | ✅ Suggests next action |
 
 ---
 
@@ -89,19 +96,19 @@ Done. You now have a live observability + recovery pipeline.
 {
   "status": "critical",
   "health_score": {
-    "score": 34.2,
+    "score": 54.0,
     "trend": "degrading"
   },
   "metrics": {
-    "overall_p95_ms": 854.2,
-    "error_rate": 0.19
+    "overall_p95_ms": 1311.0,
+    "error_rate": 0.25
   },
   "alerts": [
     {
-      "type": "latency_spike",
+      "type": "error_anomaly",
       "severity": "critical",
-      "triggered_by": "adaptive_threshold",
-      "reason_for_trigger": "Value (854.2) exceeds baseline by 173.8%"
+      "triggered_by": "absolute_threshold",
+      "reason_for_trigger": "Error rate 25% exceeds threshold (5%) by 400%"
     }
   ]
 }
@@ -139,7 +146,7 @@ Done. You now have a live observability + recovery pipeline.
   "priority":       "CRITICAL",
   "token":          "eyJ...",
   "auto_permitted": false,
-  "triggered_by":   "health_score < 25"
+  "triggered_by":   "health_score < 66"
 }
 ```
 
@@ -152,8 +159,8 @@ detect → evaluate → suggest → authorize → log
 ```
 
 - Tokens signed with `ACTION_SECRET_KEY` (HS256)
-- Optional IP binding — token bound to requesting client IP
-- JTI replay protection via Redis (falls back to in-memory)
+- Optional IP binding
+- JTI replay protection via Redis
 - Human or agent must explicitly authorize — nothing fires automatically
 
 ---
@@ -168,13 +175,12 @@ detect → evaluate → suggest → authorize → log
 | `ALERTENGINE_BASELINE_LEARNING_MODE` | `false` | Enable adaptive threshold learning |
 | `ALERTENGINE_HEALTH_CRITICAL_THRESHOLD` | `40` | Health score below which status = critical |
 | `ACTION_SECRET_KEY` | *(unset)* | Required to enable action tokens |
-| `RAILWAY_RESTART_URL` | *(unset)* | Railway restart webhook URL |
 
 ---
 
 ## 🤖 AI-Agent Ready
 
-Stable schema — no nulls, no variation. Directly consumable by agents. Action tokens usable without transformation.
+Stable schema — no nulls, no variation. Directly consumable by agents.
 
 ```python
 if health["health_score"]["score"] < 40:
@@ -194,9 +200,8 @@ if health["health_score"]["score"] < 40:
 | `alerts[].triggered_by` | `"absolute_threshold"` / `"adaptive_threshold"` / `"rate_of_change"` |
 | `alerts[].reason_for_trigger` | Human-readable — safe to pass directly to an LLM |
 | `suggestions[].token` | Signed JWT — pass directly to `/action/restart` |
-| `suggestions[].auto_permitted` | Always `false` — agent must explicitly authorize |
 
-Works seamlessly with Claude Code, GitHub Copilot, and Cursor.
+Works with Claude Code, GitHub Copilot, and Cursor.
 
 ---
 
@@ -214,7 +219,7 @@ AlertEngine answers: **"What should I do right now?"**
 - Circuit breaker: CLOSED → OPEN → HALF_OPEN → CLOSED. Redis failures never affect the request path.
 - Memory mode: runs without Redis — useful for local development and CI.
 - Bounded fallback buffer: 500 events held in memory during outages, drained on recovery.
-- JTI replay protection: Redis-backed. No action token can fire twice.
+- JTI replay protection: No action token can fire twice.
 
 ---
 
