@@ -18,11 +18,8 @@ You need to **know immediately — and act.**
 
 **Healthy → Failure → Alert on your phone → Tap → Recovered**
 
-<p align="center">
-  <img src="docs/demo_alert.png" width="340" alt="Critical WhatsApp alert — health score 54/100, P95 1311ms, error rate 25%, Confirm Restart button">
-  &nbsp;&nbsp;
-  <img src="docs/demo_recovery.png" width="340" alt="After tapping Confirm — Restart authorised, recovery in progress">
-</p>
+![Critical WhatsApp alert — health score 54/100, P95 1311ms, error rate 25%](docs/demo_alert.png)
+![After tapping Confirm — Restart authorised, recovery in progress](docs/demo_recovery.png)
 
 > Built on a live payment processing system. Alert fires within 60 seconds of degradation. Recovery is one tap.
 
