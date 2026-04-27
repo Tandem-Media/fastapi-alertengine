@@ -1,453 +1,309 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WhatsApp — AnchorFlow Alerts</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsApp — AnchorFlow Alerts (Upgraded)</title>
 
-    body {
-      background: #111b21;
-      font-family: -apple-system, 'Segoe UI', sans-serif;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-    }
+<style>
+body {
+  background: #111b21;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
 
-    /* Phone shell */
-    .phone {
-      width: 375px;
-      height: 780px;
-      background: #111b21;
-      border-radius: 44px;
-      border: 8px solid #2a3942;
-      box-shadow: 0 40px 80px rgba(0,0,0,.6);
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-      position: relative;
-    }
+/* Phone */
+.phone {
+  width: 375px;
+  height: 780px;
+  background: #111b21;
+  border-radius: 44px;
+  border: 8px solid #2a3942;
+  box-shadow: 0 40px 80px rgba(0,0,0,.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
 
-    /* Status bar */
-    .status-bar {
-      background: #1f2c34;
-      padding: 10px 20px 6px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-size: 12px;
-      color: #aebac1;
-    }
-    .status-bar .time { font-weight: 600; color: #e9edef; }
+.phone.critical-state {
+  border-color: #dc2626;
+  box-shadow: 0 0 30px rgba(220, 38, 38, 0.4);
+  transition: all 0.6s ease;
+}
 
-    /* Chat header */
-    .chat-header {
-      background: #1f2c34;
-      padding: 10px 16px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      border-bottom: 1px solid #2a3942;
-    }
-    .avatar {
-      width: 40px; height: 40px;
-      background: linear-gradient(135deg, #00a884, #005c4b);
-      border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px; flex-shrink: 0;
-    }
-    .chat-header .info { flex: 1; }
-    .chat-header .name { color: #e9edef; font-size: 15px; font-weight: 600; }
-    .chat-header .sub  { color: #8696a0; font-size: 12px; margin-top: 1px; }
+/* Header */
+.status-bar {
+  background: #1f2c34;
+  padding: 10px 20px;
+  color: #e9edef;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
 
-    /* Chat body */
-    .chat-body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px 12px;
-      background: #0b141a;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .chat-body::-webkit-scrollbar { display: none; }
+.chat-header {
+  background: #1f2c34;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #2a3942;
+}
 
-    /* Date divider */
-    .divider {
-      text-align: center;
-      color: #8696a0;
-      font-size: 11.5px;
-      background: #182229;
-      padding: 4px 12px;
-      border-radius: 8px;
-      align-self: center;
-      margin: 4px 0;
-    }
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #00a884;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 
-    /* Message bubble */
-    .bubble {
-      max-width: 85%;
-      padding: 8px 12px 6px;
-      border-radius: 8px;
-      font-size: 14px;
-      line-height: 1.45;
-      position: relative;
-      word-break: break-word;
-    }
-    .bubble.incoming {
-      background: #1f2c34;
-      color: #e9edef;
-      align-self: flex-start;
-      border-top-left-radius: 2px;
-    }
-    .bubble .ts {
-      font-size: 11px;
-      color: #8696a0;
-      text-align: right;
-      margin-top: 3px;
-    }
-    .bubble .sender {
-      font-size: 12px;
-      color: #00a884;
-      font-weight: 600;
-      margin-bottom: 3px;
-    }
+.name { color: #e9edef; font-weight: 600; }
+.sub { color: #8696a0; font-size: 12px; }
 
-    /* Status badge */
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 12px;
-      font-size: 12px;
-      font-weight: 700;
-      margin: 4px 0;
-    }
-    .badge.critical { background: #dc2626; color: white; }
-    .badge.healthy  { background: #16a34a; color: white; }
-    .badge.degraded { background: #d97706; color: white; }
+.chat-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #0b141a;
+  padding: 14px;
+}
 
-    /* Action button inside bubble */
-    .action-btn {
-      display: block;
-      width: 100%;
-      margin-top: 10px;
-      padding: 10px;
-      background: #00a884;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      text-align: center;
-      transition: background .15s;
-    }
-    .action-btn:hover  { background: #008f6f; }
-    .action-btn:active { background: #006b52; }
-    .action-btn.done   { background: #2a3942; color: #8696a0; cursor: default; }
+/* Messages */
+.bubble {
+  max-width: 85%;
+  background: #1f2c34;
+  color: #e9edef;
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  animation: slideIn 0.25s ease-out;
+}
 
-    /* Typing indicator */
-    .typing {
-      align-self: flex-start;
-      background: #1f2c34;
-      padding: 10px 14px;
-      border-radius: 8px;
-      border-top-left-radius: 2px;
-      display: none;
-    }
-    .typing span {
-      display: inline-block;
-      width: 8px; height: 8px;
-      background: #8696a0;
-      border-radius: 50%;
-      animation: bounce .9s infinite;
-      margin: 0 2px;
-    }
-    .typing span:nth-child(2) { animation-delay: .15s; }
-    .typing span:nth-child(3) { animation-delay: .30s; }
-    @keyframes bounce {
-      0%,60%,100% { transform: translateY(0); }
-      30%          { transform: translateY(-5px); }
-    }
+@keyframes slideIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
-    /* Chat input */
-    .chat-input {
-      background: #1f2c34;
-      padding: 8px 12px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .chat-input input {
-      flex: 1;
-      background: #2a3942;
-      border: none;
-      border-radius: 20px;
-      padding: 10px 16px;
-      color: #e9edef;
-      font-size: 14px;
-      outline: none;
-    }
-    .chat-input input::placeholder { color: #8696a0; }
-    .mic-btn {
-      width: 40px; height: 40px;
-      background: #00a884;
-      border: none;
-      border-radius: 50%;
-      color: white;
-      font-size: 18px;
-      cursor: pointer;
-      display: flex; align-items: center; justify-content: center;
-    }
+.badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+}
 
-    /* Notification dot */
-    .notif-dot {
-      position: absolute;
-      top: 12px; right: 16px;
-      width: 10px; height: 10px;
-      background: #00a884;
-      border-radius: 50%;
-      animation: pulse 1.5s infinite;
-    }
-    @keyframes pulse {
-      0%,100% { transform: scale(1); opacity: 1; }
-      50%      { transform: scale(1.4); opacity: .6; }
-    }
+.badge.critical { background: #dc2626; }
+.badge.healthy { background: #16a34a; }
 
-    /* Overlay for demo label */
-    .demo-label {
-      position: fixed;
-      bottom: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0,0,0,.7);
-      color: #8696a0;
-      font-size: 12px;
-      padding: 6px 14px;
-      border-radius: 20px;
-      pointer-events: none;
-    }
-  </style>
+/* Button */
+.action-btn {
+  margin-top: 10px;
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 6px;
+  background: #00a884;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.action-btn.loading {
+  background: #2a3942;
+  color: #8696a0;
+  cursor: wait;
+}
+
+.chat-input {
+  background: #1f2c34;
+  padding: 10px;
+  display: flex;
+}
+
+.chat-input input {
+  flex: 1;
+  background: #2a3942;
+  border: none;
+  border-radius: 20px;
+  padding: 10px;
+  color: white;
+}
+</style>
 </head>
+
 <body>
 
-<div class="phone">
-  <!-- Status bar -->
+<div class="phone" id="phone">
   <div class="status-bar">
-    <span class="time" id="clock">9:41</span>
-    <span>📶 WiFi 🔋</span>
+    <span id="clock">--:--</span>
+    <span>WiFi</span>
   </div>
 
-  <!-- Chat header -->
   <div class="chat-header">
     <div class="avatar">⚡</div>
-    <div class="info">
+    <div>
       <div class="name">AnchorFlow Alerts</div>
-      <div class="sub" id="sub-status">Monitoring active</div>
+      <div class="sub" id="statusText">Monitoring active</div>
     </div>
-    <div class="notif-dot" id="notif-dot" style="display:none"></div>
   </div>
 
-  <!-- Chat body -->
   <div class="chat-body" id="chat">
-
-    <div class="divider" id="date-divider">Today</div>
-
-    <!-- Initial healthy message -->
-    <div class="bubble incoming" id="msg-healthy">
-      <div class="sender">AnchorFlow Alerts</div>
-      <span class="badge healthy">✅ HEALTHY</span><br>
-      System is operating normally.<br>
-      Health score: <strong id="score-healthy">–</strong>/100<br>
-      P95: <strong id="p95-healthy">–</strong>ms
-      <div class="ts" id="ts-healthy">–</div>
+    <div class="bubble">
+      System online. Waiting for signals.
     </div>
-
-    <!-- Typing indicator -->
-    <div class="typing" id="typing">
-      <span></span><span></span><span></span>
-    </div>
-
   </div>
 
-  <!-- Chat input -->
   <div class="chat-input">
-    <input type="text" placeholder="Message" readonly>
-    <button class="mic-btn">🎤</button>
+    <input type="text" placeholder="Message (disabled)" readonly>
   </div>
 </div>
 
-<div class="demo-label">Demo — AlertEngine WhatsApp Simulator</div>
-
 <script>
-  const HEALTH_URL  = 'http://localhost:8000/health/alerts';
-  const RECOVER_URL = 'http://localhost:8000/demo/recover';
-  const POLL_MS     = 3000;
+const HEALTH_URL = "/health/alerts";
+const RECOVER_URL = "/demo/recover";
 
-  let lastStatus   = null;
-  let alertSent    = false;
-  let recoverSent  = false;
+/* ---------------- STATE MACHINE ---------------- */
+const state = {
+  lastStatus: null,
+  alertActive: false,
+  recovering: false,
+  incidentId: null,
+  polling: false
+};
 
-  // Live clock
-  function updateClock() {
-    const now = new Date();
-    document.getElementById('clock').textContent =
-      now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
-  }
-  updateClock();
-  setInterval(updateClock, 30000);
+/* ---------------- SAFE CLOCK ---------------- */
+setInterval(() => {
+  const d = new Date();
+  document.getElementById("clock").textContent =
+    d.getHours().toString().padStart(2,"0") + ":" +
+    d.getMinutes().toString().padStart(2,"0");
+}, 1000);
 
-  function now12() {
-    const d = new Date();
-    let h = d.getHours(), m = String(d.getMinutes()).padStart(2,'0');
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12 || 12;
-    return `${h}:${m} ${ampm}`;
-  }
+/* ---------------- HELPERS ---------------- */
+function addBubble(html) {
+  const div = document.createElement("div");
+  div.className = "bubble";
+  div.innerHTML = html;
+  document.getElementById("chat").appendChild(div);
+  div.scrollIntoView({ behavior: "smooth" });
+}
 
-  function scrollBottom() {
-    const c = document.getElementById('chat');
-    c.scrollTop = c.scrollHeight;
-  }
+function setStatus(text) {
+  document.getElementById("statusText").textContent = text;
+}
 
-  function showTyping(ms) {
-    document.getElementById('typing').style.display = 'block';
-    scrollBottom();
-    return new Promise(r => setTimeout(() => {
-      document.getElementById('typing').style.display = 'none';
-      r();
-    }, ms));
-  }
+/* ---------------- POLLING LOOP (SAFE) ---------------- */
+async function poll() {
+  if (state.polling) return;
+  state.polling = true;
 
-  function addBubble(html) {
-    const div = document.createElement('div');
-    div.className = 'bubble incoming';
-    div.innerHTML = html;
-    document.getElementById('chat').appendChild(div);
-    scrollBottom();
-    return div;
-  }
+  try {
+    const res = await fetch(HEALTH_URL);
+    const data = await res.json();
 
-  function showNotif() {
-    document.getElementById('notif-dot').style.display = 'block';
-    document.getElementById('sub-status').textContent = '🔴 Alert received';
-    setTimeout(() => {
-      document.getElementById('notif-dot').style.display = 'none';
-    }, 5000);
-  }
+    const hs = data?.health_score || {};
+    const metrics = data?.metrics || {};
 
-  async function sendCriticalAlert(data) {
-    const hs = data.health_score || {};
-    const m  = data.metrics || {};
-    const score    = (hs.score ?? '–').toFixed ? hs.score.toFixed(0) : '–';
-    const trend    = hs.trend ?? 'unknown';
-    const p95      = (m.overall_p95_ms ?? '–').toFixed ? m.overall_p95_ms.toFixed(0) : '–';
-    const errRate  = m.error_rate != null ? (m.error_rate * 100).toFixed(1) + '%' : '–';
+    const status = hs?.status || "unknown";
+    const score = hs?.score ?? 100;
 
-    showNotif();
-    await showTyping(1200);
+    const phone = document.getElementById("phone");
 
-    const bubble = addBubble(`
-      <div class="sender">AnchorFlow Alerts</div>
-      <span class="badge critical">🚨 CRITICAL</span><br>
-      <strong>Payment API degraded</strong><br><br>
-      Health score: <strong>${score}/100</strong><br>
-      Trend: <strong>${trend}</strong><br>
-      P95 latency: <strong>${p95}ms</strong><br>
-      Error rate: <strong>${errRate}</strong><br><br>
-      <em>Recommended action: Restart service</em>
-      <button class="action-btn" id="confirm-btn" onclick="confirmRestart(this)">
-        ✅ Confirm Restart
-      </button>
-      <div class="ts">${now12()}</div>
-    `);
-  }
-
-  async function sendRecoveryMessage(data) {
-    const hs    = data.health_score || {};
-    const score = (hs.score ?? '–').toFixed ? hs.score.toFixed(0) : '–';
-
-    await showTyping(800);
-    addBubble(`
-      <div class="sender">AnchorFlow Alerts</div>
-      <span class="badge healthy">✅ RECOVERED</span><br>
-      Service restarted successfully.<br>
-      Health score: <strong>${score}/100</strong><br>
-      System is stabilising.
-      <div class="ts">${now12()}</div>
-    `);
-  }
-
-  async function confirmRestart(btn) {
-    btn.textContent = '⏳ Authorising...';
-    btn.classList.add('done');
-
-    try {
-      await fetch(RECOVER_URL, { method: 'POST' });
-    } catch(e) {
-      console.warn('Recover call failed (expected if demo server is down):', e);
+    /* UI critical state */
+    if (status === "critical") {
+      phone.classList.add("critical-state");
+    } else {
+      phone.classList.remove("critical-state");
     }
 
-    btn.textContent = '✅ Restart authorised';
-    recoverSent = true;
-    alertSent   = false;
+    /* ---------------- CRITICAL ---------------- */
+    if (status === "critical" && !state.alertActive) {
+      state.alertActive = true;
+      state.recovering = false;
+      state.incidentId = crypto.randomUUID();
 
-    await showTyping(600);
-    addBubble(`
-      <div class="sender">AnchorFlow Alerts</div>
-      ⏳ Restart in progress…<br>
-      Monitoring recovery.
-      <div class="ts">${now12()}</div>
-    `);
-  }
+      addBubble(`
+        <strong>🚨 CRITICAL ALERT</strong><br>
+        Incident: ${state.incidentId}<br>
+        Score: ${Math.round(score)}/100<br>
+        P95: ${Math.round(metrics.overall_p95_ms || 0)}ms<br>
 
-  // Expose globally for onclick
-  window.confirmRestart = confirmRestart;
+        <button class="action-btn" onclick="recover(this)">
+          Confirm Recovery
+        </button>
+      `);
 
-  async function poll() {
-    try {
-      const r    = await fetch(HEALTH_URL, { cache: 'no-store' });
-      const data = await r.json();
-
-      const hs     = data.health_score || {};
-      const score  = hs.score ?? 100;
-      const status = hs.status ?? 'healthy';
-      const m      = data.metrics || {};
-      const p95    = m.overall_p95_ms ?? 0;
-
-      // Update initial healthy bubble
-      if (lastStatus === null) {
-        document.getElementById('score-healthy').textContent = score.toFixed(0);
-        document.getElementById('p95-healthy').textContent   = p95.toFixed(0);
-        document.getElementById('ts-healthy').textContent    = now12();
-      }
-
-      // Critical → send alert
-      if (status === 'critical' && !alertSent) {
-        alertSent = true;
-        recoverSent = false;
-        await sendCriticalAlert(data);
-      }
-
-      // Recovered → send recovery message
-      if (lastStatus === 'critical' && status !== 'critical' && recoverSent) {
-        recoverSent = false;
-        await sendRecoveryMessage(data);
-        document.getElementById('sub-status').textContent = 'Monitoring active';
-      }
-
-      lastStatus = status;
-
-    } catch(e) {
-      // Server not reachable — silently skip
+      setStatus("Critical incident active");
     }
-  }
 
-  // Poll immediately then every POLL_MS
-  poll();
-  setInterval(poll, POLL_MS);
+    /* ---------------- RECOVERY COMPLETE ---------------- */
+    if (
+      status === "healthy" &&
+      state.recovering === true
+    ) {
+      state.alertActive = false;
+      state.recovering = false;
+
+      addBubble(`
+        <strong>✅ RECOVERY COMPLETE</strong><br>
+        Incident resolved: ${state.incidentId}<br>
+        Score restored to ${Math.round(score)}/100
+      `);
+
+      setStatus("Monitoring active");
+      state.incidentId = null;
+    }
+
+    state.lastStatus = status;
+
+  } catch (e) {
+    console.error("Polling error:", e);
+  } finally {
+    state.polling = false;
+  }
+}
+
+/* ---------------- ACTION HANDLER ---------------- */
+async function recover(btn) {
+  if (state.recovering) return;
+
+  state.recovering = true;
+  btn.disabled = true;
+  btn.classList.add("loading");
+  btn.textContent = "Processing...";
+
+  try {
+    await fetch(RECOVER_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        incidentId: state.incidentId
+      })
+    });
+
+    setStatus("Recovering system...");
+
+    addBubble(`
+      <strong>🛠 Recovery Initiated</strong><br>
+      Restarting services for incident ${state.incidentId}
+    `);
+
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+/* ---------------- START LOOP ---------------- */
+setInterval(poll, 3000);
+poll();
 </script>
+
 </body>
 </html>
