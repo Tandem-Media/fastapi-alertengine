@@ -1,38 +1,26 @@
 # demo_app.py
-"""
-fastapi-alertengine Demo App — with real Twilio WhatsApp alerts
-
-Flow:
-    1. Load generator hits /api/payments/process continuously
-    2. POST /demo/fail → latency + errors spike
-    3. Background monitor detects critical health
-    4. Sends WhatsApp via Twilio with tap-to-recover link
-    5. You tap the link → GET /action/recover → system recovers
-    6. WhatsApp recovery confirmation sent
-
-Run:
-    pip install fastapi uvicorn redis fastapi-alertengine twilio python-dotenv httpx
-    cp .env.example .env   # fill in your credentials
-    redis-server
-    uvicorn demo_app:app --no-access-log
-    python load.py          # in a second terminal
-
-Open simulator at: http://localhost:8000/sim/whatsapp_sim.html
-"""
 
 import asyncio
 import logging
 import os
 import random
+import time
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from fastapi_alertengine import instrument
-from whatsapp_alert import send_critical_alert, send_recovery_message
+from token_utils import generate_recovery_token, verify_recovery_token, consume_token
+from whatsapp_alert import (
+    send_critical_alert,
+    send_recovery_message,
+    send_escalation_alert,
+)
+
+# ── Setup ─────────────────────────────────────────────────────────────────────
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -40,21 +28,36 @@ logger = logging.getLogger("demo")
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000")
 
-# ── Failure switch ─────────────────────────────────────────────────────────────
-_FAIL: dict = {
+if BASE_URL == "http://localhost:8000":
+    logger.warning("BASE_URL is localhost — WhatsApp tap links won't work on phone. Set ngrok URL in .env")
+
+# ── Failure simulation ─────────────────────────────────────────────────────────
+
+_FAIL = {
     "enabled":       False,
     "latency_boost": 0.0,
     "error_rate":    0.0,
 }
 
-# ── Alert state ────────────────────────────────────────────────────────────────
-_ALERT: dict = {
-    "sent":          False,
-    "recovery_sent": False,
-    "last_status":   None,
+# ── Alert + escalation state ───────────────────────────────────────────────────
+
+_ALERT = {
+    "sent":            False,
+    "recovery_sent":   False,
+    "last_status":     None,
+    "incident_id":     None,
+    "incident_start":  0,
+    "last_sent_at":    0,
+    "reminder_sent":   False,
+    "escalation_sent": False,
 }
 
-# ── App setup ──────────────────────────────────────────────────────────────────
+COOLDOWN_SECONDS = 120
+REMINDER_AFTER   = 120
+ESCALATE_AFTER   = 300
+
+# ── App ───────────────────────────────────────────────────────────────────────
+
 app = FastAPI(title="AlertEngine Demo")
 
 app.add_middleware(
@@ -65,20 +68,19 @@ app.add_middleware(
 )
 
 engine = instrument(app, health_path="/health/alerts")
-
-# Serve whatsapp_sim.html at http://localhost:8000/sim/whatsapp_sim.html
 app.mount("/sim", StaticFiles(directory=".", html=True), name="sim")
 
 
-# ── Background health monitor ──────────────────────────────────────────────────
+# ── Monitor loop ──────────────────────────────────────────────────────────────
 
 async def _monitor_loop():
-    await asyncio.sleep(15)   # let baseline build first
-    logger.info("Health monitor started — polling every 5s")
+    await asyncio.sleep(15)
+    logger.info("📡 Monitor started")
 
     while True:
         try:
-            health = engine.evaluate()
+            health = engine.evaluate(window_size=200)
+
             hs     = health.get("health_score", {})
             score  = hs.get("score", 100)
             status = hs.get("status", "healthy")
@@ -86,47 +88,105 @@ async def _monitor_loop():
             m      = health.get("metrics", {})
             p95    = m.get("overall_p95_ms", 0)
             err    = m.get("error_rate", 0)
+            now    = time.time()
 
-            logger.info("Health: score=%.0f status=%s p95=%.0fms err=%.1f%%",
-                        score, status, p95, err * 100)
+            logger.info("Health: %s | score=%.0f p95=%.0fms err=%.1f%%",
+                        status, score, p95, err * 100)
 
-            if status == "critical" and not _ALERT["sent"]:
-                _ALERT["sent"]          = True
-                _ALERT["recovery_sent"] = False
-                confirm_url = f"{BASE_URL}/action/recover?token=demo-confirm"
-                logger.warning("CRITICAL — sending WhatsApp alert")
-                sent = send_critical_alert(
-                    health_score=score,
-                    p95_ms=p95,
-                    error_rate=err,
-                    trend=trend,
-                    confirm_url=confirm_url,
-                )
-                if not sent:
-                    logger.info("(WhatsApp not configured — would have sent alert here)")
+            # New incident detected
+            if status == "critical" and _ALERT["last_status"] != "critical":
+                _ALERT.update({
+                    "sent":            False,
+                    "recovery_sent":   False,
+                    "incident_id":     f"inc-{int(now)}",
+                    "incident_start":  now,
+                    "reminder_sent":   False,
+                    "escalation_sent": False,
+                })
 
-            elif status in ("healthy", "degraded") and _ALERT["sent"] and not _ALERT["recovery_sent"]:
-                _ALERT["recovery_sent"] = True
-                _ALERT["sent"]          = False
-                logger.info("RECOVERED — sending WhatsApp recovery message")
-                sent = send_recovery_message(health_score=score)
-                if not sent:
-                    logger.info("(WhatsApp not configured — would have sent recovery here)")
+            # Initial alert
+            if (status == "critical"
+                    and not _ALERT["sent"]
+                    and (now - _ALERT["last_sent_at"] > COOLDOWN_SECONDS)):
+                _ALERT["sent"]        = True
+                _ALERT["last_sent_at"] = now
+                logger.warning("🚨 Initial alert (%s)", _ALERT["incident_id"])
+                try:
+                    send_critical_alert(
+                        health_score=round(score),
+                        p95_ms=round(p95),
+                        error_rate=round(err * 100, 1),
+                        trend=trend,
+                        _token = generate_recovery_token(_ALERT["incident_id"])
+                    confirm_url=f"{BASE_URL}/action/recover?token={_token}",
+                    )
+                except Exception as e:
+                    logger.error("Alert send failed: %s", e)
+
+            # Reminder
+            if (status == "critical"
+                    and not _ALERT["reminder_sent"]
+                    and (now - _ALERT["incident_start"] > REMINDER_AFTER)):
+                _ALERT["reminder_sent"] = True
+                logger.warning("⏱ Reminder alert (%s)", _ALERT["incident_id"])
+                try:
+                    send_critical_alert(
+                        health_score=round(score),
+                        p95_ms=round(p95),
+                        error_rate=round(err * 100, 1),
+                        trend="still critical",
+                        _token = generate_recovery_token(_ALERT["incident_id"])
+                    confirm_url=f"{BASE_URL}/action/recover?token={_token}",
+                    )
+                except Exception as e:
+                    logger.error("Reminder failed: %s", e)
+
+            # Escalation
+            if (status == "critical"
+                    and not _ALERT["escalation_sent"]
+                    and (now - _ALERT["incident_start"] > ESCALATE_AFTER)):
+                _ALERT["escalation_sent"] = True
+                logger.error("🚨 ESCALATION (%s)", _ALERT["incident_id"])
+                try:
+                    send_escalation_alert(
+                        incident_id=_ALERT["incident_id"],
+                        duration=int(now - _ALERT["incident_start"]),
+                        health_score=round(score),
+                    )
+                except Exception as e:
+                    logger.error("Escalation failed: %s", e)
+
+            # Recovery
+            if (status in ("healthy", "degraded")
+                    and _ALERT["last_status"] == "critical"):
+                logger.info("✅ RECOVERED (%s)", _ALERT["incident_id"])
+                try:
+                    send_recovery_message(health_score=round(score))
+                except Exception as e:
+                    logger.error("Recovery message failed: %s", e)
+                _ALERT.update({
+                    "sent":          False,
+                    "recovery_sent": True,
+                    "incident_id":   None,
+                })
 
             _ALERT["last_status"] = status
 
-        except Exception as exc:
-            logger.error("Monitor error: %s", exc)
+        except Exception as e:
+            logger.error("Monitor loop error: %s", e)
 
         await asyncio.sleep(5)
 
 
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
+
 @app.on_event("startup")
-async def _start_monitor():
+async def startup():
     asyncio.create_task(_monitor_loop())
+    logger.info("🚀 App started")
 
 
-# ── Core payment endpoint ──────────────────────────────────────────────────────
+# ── Payment endpoint ──────────────────────────────────────────────────────────
 
 @app.get("/api/payments/process")
 async def process_payment():
@@ -146,39 +206,47 @@ async def process_payment():
     }
 
 
-# ── Demo controls ──────────────────────────────────────────────────────────────
+# ── Demo controls ─────────────────────────────────────────────────────────────
 
 @app.post("/demo/fail")
-def trigger_failure():
+def fail():
     _FAIL.update({"enabled": True, "latency_boost": 1.2, "error_rate": 0.5})
     _ALERT["sent"] = False
-    logger.warning("FAIL MODE ENABLED")
-    return {
-        "status":  "FAIL MODE ENABLED",
-        "message": "Score will drop within 60s. Watch the simulator.",
-    }
+    logger.warning("🔴 FAIL MODE")
+    return {"status": "FAIL MODE", "message": "Score will drop within 60s."}
 
 
 @app.post("/demo/degrade")
-def degrade_only():
+def degrade():
     _FAIL.update({"enabled": True, "latency_boost": 0.7, "error_rate": 0.0})
-    logger.warning("DEGRADED MODE")
-    return {"status": "DEGRADED MODE", "message": "Latency degraded. Watch for RoC alert."}
+    logger.warning("🟡 DEGRADED MODE")
+    return {"status": "DEGRADED MODE"}
 
 
 @app.post("/demo/recover")
-def recover():
+def recover(payload: dict = Body(default={})):
     _FAIL.update({"enabled": False, "latency_boost": 0.0, "error_rate": 0.0})
-    logger.info("SYSTEM RECOVERED (manual)")
+    logger.info("🟢 MANUAL RECOVERY")
     return {"status": "RECOVERED", "message": "Score will rise within 60s."}
 
 
-# ── Tap-to-recover (WhatsApp link target) ──────────────────────────────────────
+# ── Tap-to-recover page ───────────────────────────────────────────────────────
 
 @app.get("/action/recover", response_class=HTMLResponse)
 def recover_from_whatsapp(token: str = Query(None)):
+    if not token:
+        return HTMLResponse("<h1>⛔ Missing token</h1>", status_code=400)
+
+    payload = verify_recovery_token(token)
+    if not payload:
+        return HTMLResponse("<h1>⛔ Link expired or invalid</h1>", status_code=403)
+
+    if not consume_token(token):
+        return HTMLResponse("<h1>⚠️ Link already used</h1>", status_code=403)
+
+    incident_id = payload.get("incident_id") or payload.get("extra", {}).get("incident_id", "unknown")
     _FAIL.update({"enabled": False, "latency_boost": 0.0, "error_rate": 0.0})
-    logger.info("RECOVERED via WhatsApp tap (token=%s)", token)
+    logger.info("🟢 RECOVERED via tap — incident=%s", incident_id)
 
     return HTMLResponse(content="""<!DOCTYPE html>
 <html lang="en">
@@ -222,7 +290,7 @@ def recover_from_whatsapp(token: str = Query(None)):
 </html>""")
 
 
-# ── Browser control panel ──────────────────────────────────────────────────────
+# ── Control panel ─────────────────────────────────────────────────────────────
 
 @app.get("/demo", response_class=HTMLResponse)
 def demo_panel():
@@ -263,7 +331,7 @@ def demo_panel():
   <h1>⚡ AlertEngine Demo</h1>
   <div class="sub">
     <a href="/health/alerts" target="_blank">/health/alerts</a> ·
-    <a href="/sim/whatsapp_sim.html" target="_blank">📱 WhatsApp Simulator</a> ·
+    <a href="/sim/whatsapp_sim.html" target="_blank">📱 Simulator</a> ·
     <a href="/docs" target="_blank">API docs</a>
   </div>
 
