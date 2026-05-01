@@ -1,21 +1,7 @@
 # load.py
 """
-Load generator for the AlertEngine demo.
-
-Sends steady burst traffic to /api/payments/process so that
-AlertEngine has enough data to compute P95 latency, error rate,
-and health scores.
-
-Run:
-    python load.py
-
-Options (edit at top of file):
-    BASE_URL     — target server
-    CONCURRENCY  — requests per burst
-    INTERVAL_S   — seconds between bursts
-
-Pre-warm: run for 15–20 seconds before triggering failure so that
-AlertEngine has a baseline and the drop looks dramatic.
+Load generator for AlertEngine demo.
+Higher concurrency = faster detection via _recent buffer.
 """
 
 import asyncio
@@ -25,8 +11,8 @@ import time
 import httpx
 
 BASE_URL    = "http://localhost:8000"
-CONCURRENCY = 15       # requests per burst
-INTERVAL_S  = 0.3      # seconds between bursts
+CONCURRENCY = 30       # increased from 15
+INTERVAL_S  = 0.1      # increased from 0.3
 ENDPOINT    = "/api/payments/process"
 
 stats = {"ok": 0, "err": 0, "total": 0, "start": time.time()}
@@ -34,7 +20,7 @@ stats = {"ok": 0, "err": 0, "total": 0, "start": time.time()}
 
 async def hit(client: httpx.AsyncClient) -> None:
     try:
-        r = await client.get(f"{BASE_URL}{ENDPOINT}", timeout=5)
+        r = await client.get(f"{BASE_URL}{ENDPOINT}", timeout=10)
         body = r.json()
         stats["total"] += 1
         if body.get("status") == "success":
@@ -63,12 +49,10 @@ def _print_stats() -> None:
 async def main() -> None:
     print(f"⚡ Load generator → {BASE_URL}{ENDPOINT}")
     print(f"   Concurrency: {CONCURRENCY} req/burst  |  Interval: {INTERVAL_S}s")
-    print(f"   Pre-warm for 15–20s before triggering failure.\n")
+    print(f"   Pre-warm for 20s before triggering failure.\n")
 
     async with httpx.AsyncClient() as client:
-        burst_n = 0
         while True:
-            burst_n += 1
             tasks = [hit(client) for _ in range(CONCURRENCY)]
             await asyncio.gather(*tasks)
             _print_stats()
