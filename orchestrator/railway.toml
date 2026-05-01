@@ -1,8 +1,11 @@
 [build]
 builder = "nixpacks"
 
+[build.nixpacks]
+pkgs = ["python311"]
+
 [deploy]
-startCommand = "cd orchestrator && python main.py"
+startCommand = "python main.py"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
