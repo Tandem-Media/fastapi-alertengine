@@ -1,12 +1,20 @@
 # orchestrator/loop.py
 """
-Orchestrator Control Loop — Hardened v2
+Orchestrator polling loop.
 
-Fixes applied vs v1:
-1. State cache          — last-known-good health when AlertEngine is unreachable
-2. Hysteresis           — trigger at 75, recover at 68 (prevents oscillation)
-3. Action lock          — one active suggestion at a time (prevents collision)
-4. Incident memory      — adaptive recall of prior incidents + outcomes
+Responsibilities:
+- Poll AlertEngine /health/alerts
+- Load active incident from Redis
+- Call Claude for decisioning
+- Delegate transitions to pipeline.py
+- Delegate notifications to notifications.py
+- Persist state to memory.py
+
+Rules:
+- No business logic here
+- No timing heuristics
+- No direct notification calls (delegates only)
+- Loop body must complete in < loop_interval seconds
 """
 
 import asyncio
@@ -15,214 +23,193 @@ import os
 import time
 from typing import Optional
 
-from .alertengine_client import AlertEngineClient
-from .action_generator   import ActionGenerator
-from .audit              import log_cycle
-from .claude_engine      import reason, OrchestratorDecision
-from .memory             import IncidentMemory
-from .policy             import evaluate as policy_evaluate, PolicyDecision
-from .state_cache        import StateCache
+import httpx
+
+from pipeline import (
+    new_incident,
+    transition,
+    next_required_stage,
+    stage_age,
+    incident_duration,
+    is_terminal,
+)
+from memory import (
+    get_active_incident,
+    save_incident,
+    resolve_incident,
+    get_active_incident_id,
+)
+from notifications import (
+    fire,
+    send_detection,
+    send_validation,
+    send_recovery,
+    send_voice_escalation,
+    send_secondary_escalation,
+)
+from claude_engine import get_decision
+from policy import should_alert, should_escalate_voice, should_escalate_secondary
 
 logger = logging.getLogger("orchestrator.loop")
 
-POLL_INTERVAL_S   = int(os.getenv("ORCHESTRATOR_POLL_S",          "30"))
-TRIGGER_SCORE     = float(os.getenv("ORCHESTRATOR_MIN_SCORE",      "75"))
-RECOVERY_SCORE    = float(os.getenv("ORCHESTRATOR_RECOVERY_SCORE", "68"))
-ESCALATE_SCORE    = float(os.getenv("ORCHESTRATOR_ESCALATE_SCORE", "25"))
-MAX_CYCLES        = int(os.getenv("ORCHESTRATOR_MAX_CYCLES",       "0"))
-STAGNATION_LIMIT  = int(os.getenv("ORCHESTRATOR_STAGNATION_LIMIT", "3"))
-ACTION_LOCK_TTL   = int(os.getenv("ORCHESTRATOR_ACTION_LOCK_TTL",  "120"))
-SERVICE_NAME      = os.getenv("ALERTENGINE_SERVICE_NAME", "default")
+ALERTENGINE_URL  = os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000")
+ACTION_BASE_URL  = os.getenv("ACTION_BASE_URL", ALERTENGINE_URL)
+LOOP_INTERVAL_S  = float(os.getenv("LOOP_INTERVAL_S", "5"))
+VOICE_AFTER_S    = float(os.getenv("VOICE_AFTER_S", "180"))
+SECONDARY_AFTER_S = float(os.getenv("SECONDARY_AFTER_S", "300"))
 
 
-class OrchestratorLoop:
+# ── AlertEngine client ─────────────────────────────────────────────────────────
 
-    def __init__(self):
-        self.client    = AlertEngineClient()
-        self.generator = ActionGenerator(self.client)
-        self.cache     = StateCache()
-        self.memory    = IncidentMemory()
-        self.cycle     = 0
-        self._activated      = False
-        self._prev_scores:   list = []
-        self._stagnation_n   = 0
-        self._active_action:    Optional[str]  = None
-        self._active_action_at: float          = 0.0
-        self._active_sig:       Optional[str]  = None
+async def _fetch_health() -> Optional[dict]:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{ALERTENGINE_URL}/health/alerts")
+            if r.status_code == 200:
+                return r.json()
+    except Exception as e:
+        logger.error("Health fetch failed: %s", e)
+    return None
 
-    async def run(self):
-        logger.info(
-            "Orchestrator started | poll=%ds trigger=%.0f recovery=%.0f",
-            POLL_INTERVAL_S, TRIGGER_SCORE, RECOVERY_SCORE,
-        )
-        while True:
-            self.cycle += 1
-            if MAX_CYCLES > 0 and self.cycle > MAX_CYCLES:
-                logger.info("Max cycles (%d) reached — stopping.", MAX_CYCLES)
-                break
-            await self._tick()
-            await asyncio.sleep(POLL_INTERVAL_S)
 
-    async def _tick(self):
-        logger.info("-- Cycle %d --", self.cycle)
+# ── Recovery action trigger ────────────────────────────────────────────────────
 
-        # 1. Fetch with cache fallback
-        raw = await self.client.get_health()
-        if raw is not None:
-            self.cache.update(raw)
-            health, freshness = raw, "fresh"
-        else:
-            health, freshness = self.cache.get()
-
-        if freshness == "empty":
-            logger.warning("No health data — skipping.")
-            return
-        if freshness == "expired":
-            logger.error("Cache expired (>10min) — orchestrator idling.")
-            return
-        if freshness == "stale":
-            logger.warning("Using STALE cache (age=%ss)", health.get("_cache_age_s"))
-
-        hs    = health.get("health_score", {})
-        score = hs.get("score", 100) if isinstance(hs, dict) else 100
-        trend = hs.get("trend", "stable") if isinstance(hs, dict) else "stable"
-
-        # 2. Resolve pending action outcome
-        self._maybe_resolve_action(score)
-
-        # 3. Hysteresis
-        if not self._activated:
-            if score < TRIGGER_SCORE or trend == "degrading":
-                self._activated = True
-                logger.info("ACTIVATED: score=%.1f trend=%s", score, trend)
-            else:
-                logger.info("Stable (score=%.1f) — idle.", score)
-                return
-        else:
-            if score >= RECOVERY_SCORE and trend != "degrading":
-                self._activated = False
-                logger.info("RECOVERED: score=%.1f — idle.", score)
-                return
-            logger.info("Still degraded: score=%.1f trend=%s", score, trend)
-
-        # 4. Action lock
-        if self._action_locked():
-            remaining = ACTION_LOCK_TTL - int(time.time() - self._active_action_at)
-            logger.info("Action lock active (%ds remaining) — skipping.", remaining)
-            return
-
-        # 5. Auto-escalate
-        if score < ESCALATE_SCORE:
-            logger.critical("Score=%.1f below %.0f — MANUAL INTERVENTION REQUIRED",
-                            score, ESCALATE_SCORE)
-
-        # 6. Context
-        timeline       = await self.client.get_timeline(limit=10)
-        memory_summary = self.memory.summary(health, SERVICE_NAME)
-        if memory_summary:
-            health["_memory_context"] = memory_summary
-        if freshness == "stale":
-            health["_warning"] = (
-                f"Health data STALE (age={health.get('_cache_age_s')}s). "
-                "AlertEngine may be unreachable. Lower confidence accordingly."
+async def _trigger_recovery(token: str) -> bool:
+    """
+    Call the recovery endpoint programmatically.
+    This is an API call — not UI-only.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{ACTION_BASE_URL}/action/recover",
+                params={"token": token},
             )
-
-        # 7. Claude reasoning
-        decision = await reason(health=health, timeline=timeline)
-        if decision is None:
-            logger.error("Claude failed — skipping.")
-            log_cycle(self.cycle, health, None, None, None)
-            return
-
-        logger.info("Claude: action=%s confidence=%s stop=%s",
-                    decision.action_type, decision.confidence, decision.stop_condition)
-
-        # 8. Stop/Escalate
-        if decision.stop_condition == "Stop":
-            log_cycle(self.cycle, health, decision, None, None)
-            return
-        if decision.stop_condition == "Escalate":
-            logger.warning("ESCALATE: %s", decision.synthesis)
-            log_cycle(self.cycle, health, decision, None, None)
-            return
-
-        # 9. Policy
-        policy = policy_evaluate(decision, score)
-        if not policy.permitted:
-            logger.warning("Policy BLOCKED: %s", policy.reason)
-            log_cycle(self.cycle, health, decision, policy, None)
-            return
-
-        # 10. Generate confirm URL
-        action_result = None
-        if decision.action_type not in ("none", "investigate"):
-            action_result = await self.generator.get_confirm_url(
-                action_type=decision.action_type,
-            )
-            if action_result:
-                self._set_action_lock(decision.action_type)
-                self._active_sig = self.memory.record(
-                    health=health, action=decision.action_type,
-                    confidence=decision.confidence, service=SERVICE_NAME,
-                )
-                self._surface_action(decision, policy, action_result, freshness)
+            ok = r.status_code == 200
+            if ok:
+                logger.info("Recovery action executed via API")
             else:
-                logger.warning("No confirm URL for action=%s", decision.action_type)
+                logger.warning("Recovery endpoint returned %d", r.status_code)
+            return ok
+    except Exception as e:
+        logger.error("Recovery trigger failed: %s", e)
+        return False
+
+
+# ── Token generation ───────────────────────────────────────────────────────────
+
+def _generate_recovery_url(incident_id: str) -> tuple[str, str]:
+    """Generate signed JWT recovery token and full URL."""
+    from action_generator import generate_recovery_token
+    token = generate_recovery_token(incident_id)
+    url   = f"{ACTION_BASE_URL}/action/recover?token={token}"
+    return token, url
+
+
+# ── Main loop iteration ────────────────────────────────────────────────────────
+
+async def _run_once() -> None:
+    # 1. Fetch health from AlertEngine
+    health = await _fetch_health()
+    if not health:
+        logger.warning("No health data — skipping iteration")
+        return
+
+    hs     = health.get("health_score", {})
+    m      = health.get("metrics", {})
+    status = hs.get("status", "healthy")
+    score  = hs.get("score", 100)
+    p95    = m.get("overall_p95_ms", 0)
+    err    = m.get("error_rate", 0)
+
+    logger.info("Health: %s | score=%.0f p95=%.0fms err=%.1f%%",
+                status, score, p95, err * 100)
+
+    # 2. Load active incident from Redis
+    incident = get_active_incident()
+    now      = time.time()
+
+    # 3. New incident detection
+    if status == "critical" and incident is None:
+        incident_id = f"inc-{int(now)}"
+
+        # Ask Claude whether to open incident
+        decision = await get_decision(health, incident=None)
+        logger.info("Claude: %s (%.0f%%) — %s",
+                    decision["action"], decision["confidence"] * 100, decision["reason"])
+
+        if decision["action"] in ("escalate", "validate") and should_alert(score, err):
+            incident = new_incident(incident_id, score, p95, err)
+            save_incident(incident)
+            logger.warning("🚨 Incident opened: %s", incident_id)
+            fire(send_detection(incident_id, score, p95, err))
         else:
-            logger.info("Action=%s — no token needed.", decision.action_type)
+            logger.info("Claude suppressed incident: %s", decision["reason"])
+        return
 
-        self._check_stagnation(score)
-        log_cycle(self.cycle, health, decision, policy, action_result)
+    # 4. No active incident and system healthy — nothing to do
+    if incident is None:
+        return
 
-    def _action_locked(self) -> bool:
-        if self._active_action is None:
-            return False
-        if time.time() - self._active_action_at >= ACTION_LOCK_TTL:
-            self._active_action = None
-            return False
-        return True
+    incident_id = incident["id"]
 
-    def _set_action_lock(self, action: str):
-        self._active_action    = action
-        self._active_action_at = time.time()
-        logger.info("Action lock SET: %s ttl=%ds", action, ACTION_LOCK_TTL)
+    # 5. System recovered
+    if status in ("healthy", "degraded") and incident.get("stage") not in ("resolved",):
+        duration = incident_duration(incident)
+        incident = transition(incident, "resolved", {"score": score})
+        save_incident(incident)
+        resolve_incident(incident_id)
+        logger.info("✅ Resolved: %s (%.0fs)", incident_id, duration)
+        fire(send_recovery(incident_id, score, duration))
+        return
 
-    def _maybe_resolve_action(self, score: float):
-        if self._active_sig and self._active_action:
-            if time.time() - self._active_action_at > 30:
-                self.memory.resolve(self._active_sig, score, SERVICE_NAME)
-                self._active_sig = None
-
-    def _surface_action(self, decision, policy, action_result, freshness):
-        sep = "-" * 60
-        stale = "  WARNING: Health data is STALE\n" if freshness == "stale" else ""
-        expires = action_result.get("expires_at")
-        remaining = max(0, int(expires - time.time())) if expires else "?"
-        print(f"\n{sep}")
-        print(f"RECOVERY ACTION REQUIRED  (Cycle {self.cycle})")
-        print(f"{sep}")
-        print(f"  Action:     {action_result['action'].upper()}")
-        print(f"  Priority:   {action_result['priority']}")
-        print(f"  Risk:       {policy.risk}")
-        print(f"  Confidence: {decision.confidence}")
-        print(stale, end="")
-        print(f"  Diagnosis:  {decision.root_cause}")
-        print(f"")
-        print(f"  APPROVE HERE:")
-        print(f"  {action_result['confirm_url']}")
-        print(f"  Token expires in ~{remaining}s")
-        print(f"{sep}\n")
-        # TODO: Replace with Twilio WhatsApp send when wired
-        logger.info("ACTION SURFACED: %s", action_result["confirm_url"])
-
-    def _check_stagnation(self, score: float):
-        self._prev_scores.append(score)
-        if len(self._prev_scores) > STAGNATION_LIMIT:
-            self._prev_scores.pop(0)
-        if len(self._prev_scores) < STAGNATION_LIMIT:
-            return
-        if max(self._prev_scores) - min(self._prev_scores) < 2.0:
-            self._stagnation_n += 1
-            logger.warning("Score stagnating over %d cycles.", STAGNATION_LIMIT)
+    # 6. Auto-advance pipeline stages (detected → proposed → validated)
+    next_stage = next_required_stage(incident)
+    if next_stage:
+        if next_stage == "validated":
+            # Generate recovery token at validated stage
+            token, url = _generate_recovery_url(incident_id)
+            incident = transition(incident, "validated", {"url": url})
+            incident["token"]        = token
+            incident["recovery_url"] = url
+            save_incident(incident)
+            fire(send_validation(incident_id, score, p95, url))
         else:
-            self._stagnation_n = 0
+            incident = transition(incident, next_stage)
+            save_incident(incident)
+
+    # 7. Escalations
+    duration = incident_duration(incident)
+
+    if (not incident.get("voice_sent")
+            and should_escalate_voice(duration, score)):
+        incident["voice_sent"] = True
+        save_incident(incident)
+        fire(send_voice_escalation(incident_id, duration, score))
+
+    if (not incident.get("secondary_sent")
+            and should_escalate_secondary(duration, score)):
+        incident["secondary_sent"] = True
+        save_incident(incident)
+        fire(send_secondary_escalation(incident_id, duration, score))
+
+    # 8. Ask Claude periodically if action needed
+    decision = await get_decision(health, incident=incident)
+    logger.info("Claude: %s (%.0f%%) — %s",
+                decision["action"], decision["confidence"] * 100, decision["reason"])
+
+    if decision["action"] == "recover" and incident.get("token"):
+        logger.info("Claude recommends recovery — triggering via API")
+        await _trigger_recovery(incident["token"])
+
+
+# ── Loop runner ────────────────────────────────────────────────────────────────
+
+async def run_loop() -> None:
+    logger.info("📡 Orchestrator loop started (interval=%.0fs)", LOOP_INTERVAL_S)
+    while True:
+        try:
+            await _run_once()
+        except Exception as e:
+            logger.error("Loop error: %s", e)
+        await asyncio.sleep(LOOP_INTERVAL_S)
