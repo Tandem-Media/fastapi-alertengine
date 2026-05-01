@@ -1,7 +1,7 @@
 # orchestrator/main.py
 """
 Orchestrator entry point.
-Validates env, exposes health endpoint, starts the loop.
+Exposes health endpoint, starts the loop.
 """
 
 import asyncio
@@ -16,28 +16,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("orchestrator")
 
-REQUIRED_ENV = [
-    "ALERTENGINE_BASE_URL",
-    "ANTHROPIC_API_KEY",
-    "ALERT_SECRET",
-    "REDIS_URL",
-]
-
 _START_TIME = time.time()
-
-
-def _validate_env() -> bool:
-    missing = [k for k in REQUIRED_ENV if not os.getenv(k)]
-    if missing:
-        logger.error("Missing required env vars: %s", ", ".join(missing))
-        return False
-    return True
 
 
 def _check_redis() -> tuple[bool, str]:
     try:
         import redis
-        r = redis.Redis.from_url(os.getenv("REDIS_URL"), decode_responses=True)
+        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        r = redis.Redis.from_url(url, decode_responses=True)
         r.ping()
         return True, "connected"
     except Exception as e:
@@ -49,18 +35,21 @@ def _check_redis() -> tuple[bool, str]:
 from fastapi import FastAPI
 import uvicorn
 
-health_app = FastAPI(title="Orchestrator Health")
+health_app = FastAPI(title="Orchestrator")
 
 
 @health_app.get("/health")
 def health():
     redis_ok, redis_msg = _check_redis()
+    missing = [k for k in ["ALERTENGINE_BASE_URL", "ANTHROPIC_API_KEY", "ALERT_SECRET", "REDIS_URL"]
+               if not os.getenv(k)]
     return {
-        "status":    "ok" if redis_ok else "degraded",
-        "uptime_s":  round(time.time() - _START_TIME, 1),
-        "redis":     {"connected": redis_ok, "message": redis_msg},
-        "loop":      "active",
-        "version":   "2.0.0",
+        "status":        "ok" if (redis_ok and not missing) else "degraded",
+        "uptime_s":      round(time.time() - _START_TIME, 1),
+        "redis":         {"connected": redis_ok, "message": redis_msg},
+        "missing_vars":  missing,
+        "loop":          "active",
+        "version":       "2.0.0",
     }
 
 
@@ -70,7 +59,6 @@ def status():
         from memory import get_active_incident
         from degraded import status as degraded_status
         from dlq import get_count as dlq_count
-
         incident = get_active_incident()
         return {
             "active_incident": incident.get("incident_id") if incident else None,
@@ -100,26 +88,36 @@ def dlq_entries():
         return {"error": str(e)}
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
+# ── Loop ───────────────────────────────────────────────────────────────────────
+
+async def _run_loop_safe():
+    """Start loop only if required vars are present."""
+    required = ["ALERTENGINE_BASE_URL", "ANTHROPIC_API_KEY", "ALERT_SECRET", "REDIS_URL"]
+    missing  = [k for k in required if not os.getenv(k)]
+
+    if missing:
+        logger.warning("Loop disabled — missing vars: %s", missing)
+        logger.warning("Add vars in Railway dashboard to enable orchestration")
+        # Keep alive without looping
+        while True:
+            await asyncio.sleep(60)
+
+    redis_ok, redis_msg = _check_redis()
+    if not redis_ok:
+        logger.error("Redis unavailable: %s — loop disabled", redis_msg)
+        while True:
+            await asyncio.sleep(60)
+
+    logger.info("✅ All vars present — starting orchestrator loop")
+    from loop import run_loop
+    await run_loop()
+
 
 async def main():
     logger.info("⚡ Orchestrator starting")
 
-    if not _validate_env():
-        sys.exit(1)
-
-    redis_ok, redis_msg = _check_redis()
-    if not redis_ok:
-        logger.error("Redis unavailable: %s", redis_msg)
-        sys.exit(1)
-
-    logger.info("✅ Redis connected")
-
-    from loop import run_loop
-
     port = int(os.getenv("PORT", "9000"))
 
-    # Run health server + orchestrator loop concurrently
     config = uvicorn.Config(
         health_app,
         host="0.0.0.0",
@@ -130,7 +128,7 @@ async def main():
 
     await asyncio.gather(
         server.serve(),
-        run_loop(),
+        _run_loop_safe(),
     )
 
 
