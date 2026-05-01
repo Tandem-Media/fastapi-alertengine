@@ -1,7 +1,9 @@
 [build]
-builder = "NIXPACKS"
+builder = "nixpacks"
 
 [deploy]
-startCommand = "python -m orchestrator.main"
-restartPolicyType = "ON_FAILURE"
+startCommand = "cd orchestrator && python main.py"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
