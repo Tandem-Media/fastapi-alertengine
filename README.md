@@ -5,16 +5,12 @@
 When a critical endpoint starts failing, dashboards don't help.  
 You need to **know immediately — and act.**
 
-For engineering teams who lose money when prod breaks — and need control, not another dashboard.
-
-[🟢 Get Started](#-quickstart-2-minutes) · [📱 See Demo](#-see-it-in-action) · [💬 Contact](mailto:anchorflow@outlook.com)
-
 ---
 
 🔥 259/259 tests passing  
 🏦 Built from real financial infrastructure (AnchorFlow / Tofamba)  
 🤖 AI-agent ready (Claude / Copilot / Cursor)  
-⚡ *No SaaS. No dashboards to babysit. Runs with or without Redis.*
+⚡ Runs with or without Redis (memory mode)
 
 ---
 
@@ -22,8 +18,11 @@ For engineering teams who lose money when prod breaks — and need control, not 
 
 **Healthy → Failure → Alert on your phone → Tap → Recovered**
 
-![Critical WhatsApp alert — health score 54/100, P95 1311ms, error rate 25%](docs/demo_alert.png)
-![After tapping Confirm — Restart authorised, recovery in progress](docs/demo_recovery.png)
+<p align="center">
+  <img src="docs/demo_alert.png" width="340" alt="Critical WhatsApp alert — health score 54/100, P95 1311ms, error rate 25%, Confirm Restart button">
+  &nbsp;&nbsp;
+  <img src="docs/demo_recovery.png" width="340" alt="After tapping Confirm — Restart authorised, recovery in progress">
+</p>
 
 > Built on a live payment processing system. Alert fires within 60 seconds of degradation. Recovery is one tap.
 
@@ -31,11 +30,19 @@ For engineering teams who lose money when prod breaks — and need control, not 
 
 ## 🧠 Why This Exists
 
-While building **AnchorFlow** — a payment platform on mobile money rails in Zimbabwe — I needed monitoring that never crashes the request path, doesn't depend on external SaaS, and doesn't just report, but **guides recovery**.
+AlertEngine was built for systems under real pressure — not dashboards.
 
-So instead of paying $400/month for slow tooling, I built an embedded stability circuit.
+While building **AnchorFlow**, a payment orchestration platform on mobile money rails in Zimbabwe, I needed monitoring that:
+
+- Never crashes the request path
+- Doesn't depend on external SaaS
+- Doesn't just report — but **guides recovery**
+
+So instead of paying $400/month for slow tooling, I built an **embedded stability circuit**.
 
 **Goal:** Reduce MTTR from minutes of panic → seconds of controlled action.
+
+The system enters the **Central Bank of Zimbabwe regulatory sandbox in May 2026** — where zero-failure assumptions get tested against real conditions.
 
 ---
 
@@ -139,7 +146,7 @@ Done. You now have a live observability + recovery pipeline.
   "priority":       "CRITICAL",
   "token":          "eyJ...",
   "auto_permitted": false,
-  "triggered_by":   "health_score < 40"
+  "triggered_by":   "health_score < 66"
 }
 ```
 
@@ -224,7 +231,7 @@ AlertEngine is the engine behind a production observability service for teams th
 |---|---|---|
 | **24h Forensic Audit** | Full P95 & error analysis. Identifying revenue leaks your current monitoring misses. | `$1,500` |
 | **Revenue Protection Engine** | Proprietary AlertEngine install. P95 monitoring on revenue-critical endpoints. | `$4,500` |
-| **Active Recovery Shield** | AlertEngine + WhatsApp Command Center. CEO-level mobile control with 5-second authorized recovery. *Your kill switch.* | `$9,500` |
+| **Active Recovery Shield** | AlertEngine + WhatsApp Command Center. CEO-level mobile control with 5-second authorized recovery. Your kill switch. | `$9,500` |
 
 This is not a report. It is an operational control system.
 
@@ -248,10 +255,6 @@ This is not a report. It is an operational control system.
 
 **📧 [anchorflow@outlook.com](mailto:anchorflow@outlook.com)**  
 **🐙 [github.com/Tandem-Media/fastapi-alertengine](https://github.com/Tandem-Media/fastapi-alertengine)**
-
----
-
-*PS — AnchorFlow enters the Central Bank of Zimbabwe regulatory sandbox in July 2026, where these zero-failure assumptions get tested against real conditions: network towers dropping in Harare, wallet provider APIs hanging mid-transaction, merchants who cannot afford a failed payment.*
 
 ---
 
