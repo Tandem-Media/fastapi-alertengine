@@ -38,8 +38,25 @@ health_app = FastAPI(title="AlertEngine Orchestrator")
 
 # Mount onboarding router
 from onboard import router as onboard_router
+from onboarding_api import router as onboarding_router
 health_app.include_router(onboard_router)
+health_app.include_router(onboarding_router)
 
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os as _os
+
+_STATIC_DIR = _os.path.join(_os.path.dirname(__file__), "static")
+if _os.path.exists(_STATIC_DIR):
+    health_app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+@health_app.get("/onboarding", include_in_schema=False)
+def onboarding_page():
+    path = _os.path.join(_os.path.dirname(__file__), "static", "onboarding.html")
+    if _os.path.exists(path):
+        return FileResponse(path)
+    return {"error": "onboarding.html not found in static/"}
 
 @health_app.get("/health")
 def health():
