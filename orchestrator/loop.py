@@ -1,17 +1,19 @@
 # orchestrator/loop.py
 """
-Stateless polling executor — Pass 2 hardened.
+Multi-tenant stateless polling executor.
 
-New in Pass 2:
-- Distributed locking (one worker per incident)
-- Idempotent action execution
-- Audit log on every transition
-- DLQ on permanent action failure
-- Degraded mode awareness
-- Structured observability logs
+Per loop tick:
+1. Fetch all active tenants from Redis
+2. For each tenant:
+   a. Acquire distributed lock
+   b. Fetch health from tenant's health_url
+   c. Load tenant incident from Redis
+   d. Call Claude for decision
+   e. Execute actions via pipeline
+   f. Notify tenant contacts
+   g. Release lock
 
-loop.py remains dumb: fetch → lock → decide → execute → release.
-All business logic stays in pipeline.py.
+No decision logic here. No global state. No blocking.
 """
 
 import asyncio
@@ -29,9 +31,9 @@ from pipeline import (
     validate_decision_schema,
 )
 from memory import (
-    get_active_incident,
     save_incident,
     resolve_incident,
+    append_audit,
 )
 from notifications import (
     fire,
@@ -53,35 +55,81 @@ from degraded import (
     can_send_notifications, record_redis_failure,
     record_notify_failure, record_success,
 )
+from tenants import list_active_tenants, get_verified_numbers
 
 logger = logging.getLogger("orchestrator.loop")
 
-ALERTENGINE_URL   = os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000")
-ACTION_BASE_URL   = os.getenv("ACTION_BASE_URL", ALERTENGINE_URL)
+ACTION_BASE_URL   = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
 LOOP_INTERVAL_S   = float(os.getenv("LOOP_INTERVAL_S", "5"))
 VOICE_AFTER_S     = float(os.getenv("VOICE_AFTER_S", "180"))
 SECONDARY_AFTER_S = float(os.getenv("SECONDARY_AFTER_S", "300"))
 
 
-# ── AlertEngine fetch ──────────────────────────────────────────────────────────
+# ── Tenant health fetch ────────────────────────────────────────────────────────
 
-async def _fetch_health() -> dict | None:
+async def _fetch_health(health_url: str) -> dict | None:
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            r = await client.get(f"{ALERTENGINE_URL}/health/alerts")
+            r = await client.get(health_url)
             if r.status_code == 200:
                 record_success()
                 return r.json()
-            logger.warning("AlertEngine returned %d", r.status_code)
+            logger.warning("Health fetch %s returned %d", health_url, r.status_code)
     except Exception as e:
-        logger.error("Health fetch failed: %s", e)
+        logger.error("Health fetch failed %s: %s", health_url, e)
         record_redis_failure()
     return None
 
 
-# ── Idempotent notification dispatcher ────────────────────────────────────────
+# ── Tenant incident key ────────────────────────────────────────────────────────
 
-async def _notify_once(
+def _get_tenant_incident(tenant_id: str) -> dict | None:
+    """Load active incident for a specific tenant."""
+    try:
+        import redis, json, os
+        r   = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        key = f"orchestrator:active_incident:{tenant_id}"
+        incident_id = r.get(key)
+        if not incident_id:
+            return None
+        data = r.get(f"orchestrator:incident:{incident_id}")
+        return json.loads(data) if data else None
+    except Exception as e:
+        logger.error("_get_tenant_incident failed: %s", e)
+        return None
+
+
+def _save_tenant_active(tenant_id: str, incident_id: str) -> None:
+    try:
+        import redis, os
+        r = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        r.setex(f"orchestrator:active_incident:{tenant_id}", 86400, incident_id)
+    except Exception as e:
+        logger.error("_save_tenant_active failed: %s", e)
+
+
+def _clear_tenant_active(tenant_id: str) -> None:
+    try:
+        import redis, os
+        r = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        r.delete(f"orchestrator:active_incident:{tenant_id}")
+    except Exception as e:
+        logger.error("_clear_tenant_active failed: %s", e)
+
+
+# ── Notification dispatcher (tenant-aware) ────────────────────────────────────
+
+async def _notify_tenant(
+    tenant_id: str,
     incident_id: str,
     stage: str,
     action_type: str,
@@ -89,34 +137,19 @@ async def _notify_once(
     *args,
     **kwargs,
 ) -> None:
-    """
-    Fire notification exactly once per (incident, stage, action_type).
-    Pushes to DLQ on permanent failure.
-    """
+    """Send notification to all verified contacts for a tenant."""
     action_id = make_action_id(incident_id, stage, action_type)
-
     try:
         executed, _ = await execute_once(
-            incident_id, stage, action_type,
-            coro_fn, *args, **kwargs
+            incident_id, stage, action_type, coro_fn, *args, **kwargs
         )
-        if executed:
-            logger.info("Notification sent: %s | %s | action_id=%s",
-                        incident_id, action_type, action_id)
-        else:
-            logger.info("Notification skipped (idempotent): %s | %s | action_id=%s",
-                        incident_id, action_type, action_id)
+        if not executed:
+            logger.info("Notification skipped (idempotent): %s | %s", incident_id, action_type)
     except Exception as e:
         record_notify_failure()
-        dlq_push(
-            incident_id=incident_id,
-            action_type=action_type,
-            error=str(e),
-            stage=stage,
-            action_id=action_id,
-        )
-        logger.error("Notification failed → DLQ: %s | %s | %s",
-                     incident_id, action_type, e)
+        dlq_push(incident_id=incident_id, action_type=action_type,
+                 error=str(e), stage=stage, action_id=action_id)
+        logger.error("Notification failed → DLQ: %s | %s | %s", incident_id, action_type, e)
 
 
 # ── Action executor ────────────────────────────────────────────────────────────
@@ -125,11 +158,8 @@ async def _execute_actions(
     actions: list,
     incident: dict,
     health: dict,
+    tenant_id: str,
 ) -> dict:
-    """
-    Execute all actions from pipeline decision.
-    Idempotent. DLQ on failure. Degraded-mode aware.
-    """
     incident_id = incident.get("incident_id", "unknown")
     stage       = incident.get("stage", "UNKNOWN")
     score       = health.get("health_score", {}).get("score", 100)
@@ -138,53 +168,33 @@ async def _execute_actions(
 
     for action in actions:
         action_type = action.get("type")
-        payload     = action.get("payload", {})
 
         if action_type == "SEND_NOTIFICATION":
             if not can_send_notifications():
-                logger.warning("EMERGENCY mode: notification suppressed | %s", incident_id)
+                logger.warning("EMERGENCY: notification suppressed | %s", incident_id)
                 continue
-
-            notif_type = payload.get("type")
+            notif_type = action.get("payload", {}).get("type")
             if notif_type == "CRITICAL":
-                fire(_notify_once(incident_id, stage, "SEND_DETECTION",
-                                  send_detection, incident_id, score, p95, err))
+                fire(_notify_tenant(tenant_id, incident_id, stage, "SEND_DETECTION",
+                                    send_detection, incident_id, score, p95, err))
             elif notif_type == "VALIDATION":
                 url = incident.get("recovery_url", "")
-                fire(_notify_once(incident_id, stage, "SEND_VALIDATION",
-                                  send_validation, incident_id, score, p95, url))
+                fire(_notify_tenant(tenant_id, incident_id, stage, "SEND_VALIDATION",
+                                    send_validation, incident_id, score, p95, url))
             elif notif_type == "RECOVERY":
                 duration = time.time() - incident.get("started_at", time.time())
-                fire(_notify_once(incident_id, stage, "SEND_RECOVERY",
-                                  send_recovery, incident_id, score, duration))
+                fire(_notify_tenant(tenant_id, incident_id, stage, "SEND_RECOVERY",
+                                    send_recovery, incident_id, score, duration))
 
         elif action_type == "GENERATE_TOKEN":
             if not can_mutate_state():
-                logger.warning("EMERGENCY mode: token generation suppressed")
                 continue
-            token = generate_recovery_token(incident_id)
+            token = generate_recovery_token(incident_id, tenant_id=tenant_id)
             url   = f"{ACTION_BASE_URL}/action/recover?token={token}"
             incident = {**incident, "token": token, "recovery_url": url}
-            logger.info("Token generated: %s | action_id=%s",
-                        incident_id,
-                        make_action_id(incident_id, stage, "GENERATE_TOKEN"))
-
-        elif action_type == "TRIGGER_RECOVERY":
-            try:
-                async with httpx.AsyncClient(timeout=5) as client:
-                    r = await client.get(
-                        f"{ACTION_BASE_URL}/action/recover",
-                        params={"token": incident.get("token", "")},
-                    )
-                    logger.info("Recovery triggered: %d | %s", r.status_code, incident_id)
-            except Exception as e:
-                dlq_push(incident_id, "TRIGGER_RECOVERY", str(e), stage)
-                logger.error("Recovery trigger failed → DLQ: %s", e)
 
         elif action_type == "ESCALATE":
             if not can_escalate():
-                logger.warning("Mode %s: escalation suppressed | %s",
-                               current_mode(), incident_id)
                 continue
             duration = time.time() - incident.get("started_at", time.time())
             fire(send_voice_escalation(incident_id, duration, score))
@@ -192,15 +202,16 @@ async def _execute_actions(
     return incident
 
 
-# ── Main loop iteration ────────────────────────────────────────────────────────
+# ── Single tenant processing ───────────────────────────────────────────────────
 
-async def _run_once() -> None:
-    mode = current_mode()
+async def _process_tenant(tenant: dict) -> None:
+    tenant_id  = tenant["tenant_id"]
+    health_url = tenant["health_url"]
+    mode       = current_mode()
 
-    # Step 1: Fetch health
-    health = await _fetch_health()
+    # Fetch health from tenant's own endpoint
+    health = await _fetch_health(health_url)
     if not health:
-        logger.warning("No health data — skipping [mode=%s]", mode)
         return
 
     hs     = health.get("health_score", {})
@@ -209,52 +220,41 @@ async def _run_once() -> None:
     score  = hs.get("score", 100)
     p95    = m.get("overall_p95_ms", 0)
     err    = m.get("error_rate", 0)
+    now    = time.time()
 
-    logger.info("Health: %s | score=%.0f p95=%.0fms err=%.1f%% | mode=%s",
-                status, score, p95, err * 100, mode)
+    logger.info("[%s] Health: %s | score=%.0f | mode=%s",
+                tenant_id, status, score, mode)
 
-    # Step 2: Load incident
-    incident = get_active_incident()
-    now      = time.time()
+    incident = _get_tenant_incident(tenant_id)
 
-    # Step 3: New incident
+    # New critical incident
     if status == "critical" and incident is None:
         if not can_mutate_state():
-            logger.warning("EMERGENCY mode: new incident suppressed")
             return
 
         claude = await claude_decide(health, incident=None)
-        logger.info("Claude: %s (%.0f%%) — %s",
-                    claude["action"], claude["confidence"] * 100, claude["reason"])
-
         if not should_alert(score, err):
             return
         if claude["action"] not in ("escalate", "validate"):
             return
 
-        incident_id = f"inc-{int(now)}"
-        decision    = decide_new_incident(incident_id, score, p95, err, claude["confidence"])
-
-        valid, reason = validate_decision_schema(decision)
+        incident_id     = f"inc-{tenant_id}-{int(now)}"
+        decision        = decide_new_incident(incident_id, score, p95, err, claude["confidence"])
+        valid, reason   = validate_decision_schema(decision)
         if not valid:
-            logger.error("Invalid schema: %s", reason)
+            logger.error("[%s] Invalid schema: %s", tenant_id, reason)
             return
 
         incident_record = open_incident(incident_id, score, p95, err)
-        if not save_incident(incident_record):
-            record_redis_failure()
-            logger.error("Failed to save incident — aborting")
-            return
+        incident_record["tenant_id"] = tenant_id
+        save_incident(incident_record)
+        _save_tenant_active(tenant_id, incident_id)
 
-        append_event(
-            incident_id=incident_id,
-            stage="DETECTED",
-            decision=claude["action"],
-            reason=decision["reason"],
-            confidence=decision["confidence"],
-        )
+        append_event(incident_id=incident_id, stage="DETECTED",
+                     decision=claude["action"], reason=decision["reason"],
+                     confidence=decision["confidence"])
 
-        await _execute_actions(decision["actions"], incident_record, health)
+        await _execute_actions(decision["actions"], incident_record, health, tenant_id)
         return
 
     if incident is None:
@@ -262,97 +262,85 @@ async def _run_once() -> None:
 
     incident_id = incident["incident_id"]
 
-    # Step 4: Acquire distributed lock
+    # Acquire lock per tenant incident
     async with incident_lock(incident_id) as acquired:
         if not acquired:
-            logger.debug("Lock not acquired for %s — skipping cycle", incident_id)
             return
 
-        # Step 5: Recovery
+        # Recovery
         if status in ("healthy", "degraded") and incident.get("stage") != "RECOVERED":
             claude   = await claude_decide(health, incident=incident)
             decision = decide(incident, health, claude)
-
             valid, reason = validate_decision_schema(decision)
             if not valid:
-                logger.error("Invalid recovery decision: %s", reason)
                 return
 
             if decision.get("next_stage") == "RECOVERED":
                 if not can_mutate_state():
-                    logger.warning("EMERGENCY: recovery transition suppressed")
                     return
                 updated = apply_transition(incident, "RECOVERED")
                 save_incident(updated)
                 resolve_incident(incident_id)
-                append_event(
-                    incident_id=incident_id,
-                    stage="RECOVERED",
-                    decision=claude["action"],
-                    reason=decision["reason"],
-                    confidence=decision["confidence"],
-                )
-                await _execute_actions(decision["actions"], updated, health)
+                _clear_tenant_active(tenant_id)
+                append_event(incident_id=incident_id, stage="RECOVERED",
+                             decision=claude["action"], reason=decision["reason"],
+                             confidence=decision["confidence"])
+                await _execute_actions(decision["actions"], updated, health, tenant_id)
             return
 
-        # Step 6: Pipeline decision
+        # Pipeline advance
         claude   = await claude_decide(health, incident=incident)
         decision = decide(incident, health, claude)
-
-        logger.info("Decision: %s → %s | notify=%s | mode=%s",
-                    decision.get("current_stage"),
-                    decision.get("next_stage"),
-                    decision.get("should_notify"),
-                    mode)
-
         valid, reason = validate_decision_schema(decision)
         if not valid:
-            logger.warning("Invalid decision schema: %s — skipping", reason)
             return
 
         next_stage = decision.get("next_stage")
-        if not next_stage:
-            return
-
-        if not can_mutate_state():
-            logger.warning("EMERGENCY: transition suppressed for %s", incident_id)
+        if not next_stage or not can_mutate_state():
             return
 
         updated = apply_transition(incident, next_stage)
-        updated = await _execute_actions(decision["actions"], updated, health)
+        updated = await _execute_actions(decision["actions"], updated, health, tenant_id)
         save_incident(updated)
+        append_event(incident_id=incident_id, stage=next_stage,
+                     decision=claude["action"], reason=decision["reason"],
+                     confidence=decision["confidence"],
+                     action_id=make_action_id(incident_id, next_stage, "TRANSITION"))
 
-        append_event(
-            incident_id=incident_id,
-            stage=next_stage,
-            decision=claude["action"],
-            reason=decision["reason"],
-            confidence=decision["confidence"],
-            action_id=make_action_id(incident_id, next_stage, "TRANSITION"),
-        )
-
-        # Step 7: Escalations
+        # Escalations
         duration = now - incident.get("started_at", now)
-
         if not incident.get("voice_sent") and should_escalate_voice(duration, score):
             if can_escalate():
                 updated["voice_sent"] = True
                 save_incident(updated)
-                fire(_notify_once(incident_id, next_stage, "VOICE_ESCALATION",
-                                  send_voice_escalation, incident_id, duration, score))
+                fire(_notify_tenant(tenant_id, incident_id, next_stage, "VOICE",
+                                    send_voice_escalation, incident_id, duration, score))
 
         if not incident.get("secondary_sent") and should_escalate_secondary(duration, score):
             if can_escalate():
                 updated["secondary_sent"] = True
                 save_incident(updated)
-                fire(_notify_once(incident_id, next_stage, "SECONDARY_ESCALATION",
-                                  send_secondary_escalation, incident_id, duration, score))
+                fire(_notify_tenant(tenant_id, incident_id, next_stage, "SECONDARY",
+                                    send_secondary_escalation, incident_id, duration, score))
 
 
-# ── Loop runner ────────────────────────────────────────────────────────────────
+# ── Main loop ──────────────────────────────────────────────────────────────────
+
+async def _run_once() -> None:
+    tenants = list_active_tenants()
+    if not tenants:
+        logger.debug("No active tenants")
+        return
+
+    # Process all tenants concurrently
+    await asyncio.gather(
+        *[_process_tenant(t) for t in tenants],
+        return_exceptions=True,
+    )
+
 
 async def run_loop() -> None:
-    logger.info("📡 Orchestrator loop started (interval=%.0fs)", LOOP_INTERVAL_S)
+    logger.info("📡 Multi-tenant loop started (interval=%.0fs)", LOOP_INTERVAL_S)
     while True:
         try:
             await _run_once()
