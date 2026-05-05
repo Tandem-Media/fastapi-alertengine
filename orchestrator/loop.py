@@ -46,7 +46,7 @@ from notifications import (
 from action_generator import generate_recovery_token
 from claude_engine import get_decision as claude_decide
 from policy import should_alert, should_escalate_voice, should_escalate_secondary
-from lock import incident_lock
+from lock import incident_lock, renew_lock
 from idempotency import execute_once, make_action_id
 from audit import append_event
 from dlq import push as dlq_push
@@ -233,11 +233,15 @@ async def _process_tenant(tenant: dict) -> None:
             return
 
         incident_id = f"inc-{tenant_id}-{int(now)}"
-        async with incident_lock(incident_id) as acquired:
-            if not acquired:
+        async with incident_lock(incident_id) as token:
+            if not token:
                 return
 
             if not should_alert(score, err):
+                return
+
+            if not renew_lock(incident_id, token):
+                logger.warning("Lock renewal failed for %s — skipping cycle", incident_id)
                 return
 
             claude = await claude_decide(health, incident=None)
@@ -268,8 +272,12 @@ async def _process_tenant(tenant: dict) -> None:
     incident_id = incident["incident_id"]
 
     # Acquire lock per tenant incident
-    async with incident_lock(incident_id) as acquired:
-        if not acquired:
+    async with incident_lock(incident_id) as token:
+        if not token:
+            return
+
+        if not renew_lock(incident_id, token):
+            logger.warning("Lock renewal failed for %s — skipping cycle", incident_id)
             return
 
         # Recovery

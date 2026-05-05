@@ -111,14 +111,14 @@ async def incident_lock(incident_id: str):
     Async context manager for incident locking.
 
     Usage:
-        async with incident_lock(incident_id) as acquired:
-            if not acquired:
+        async with incident_lock(incident_id) as token:
+            if not token:
                 return  # skip this cycle
             # safe to process
     """
     token = acquire_lock(incident_id)
     try:
-        yield token is not None
+        yield token
     finally:
         if token:
             release_lock(incident_id, token)
