@@ -1,12 +1,12 @@
 # fastapi_alertengine/actions/recovery.py
 """
-v1.6 — Health → Action Mapping Engine
+Health → Action Suggestion Engine
 
 Translates health scores into structured ActionSuggestion objects.
-NOTHING is auto-executed. The engine suggests; humans authorize.
+NOTHING is auto-executed. Suggestions are text-only descriptions.
 
 Pipeline:
-    detect → evaluate → suggest → authorize → log
+    detect → evaluate → suggest
 
 Rule table (from config, with defaults):
     health_score < 25  → suggest recovery action (CRITICAL)
@@ -15,11 +15,10 @@ Rule table (from config, with defaults):
     health_score >= 60 → no action suggested (OK)
 
 Each ActionSuggestion includes:
-- A signed JWT action token (if ACTION_SECRET_KEY is set)
-- The specific action recommended
+- The specific action recommended (text only)
 - The reason derived from current metrics
 - Priority level
-- Whether auto-execution is permitted (always False in v1.6)
+- auto_permitted is always False — nothing is executed
 """
 from __future__ import annotations
 
@@ -34,13 +33,13 @@ class ActionSuggestion:
     """
     A suggested recovery action — never auto-executed.
 
-    suggestion_id: unique ID for this suggestion (used in token linking)
+    suggestion_id: unique ID for this suggestion
     action:        "restart" | "scale" | "alert" | "notify" | "investigate"
     priority:      "CRITICAL" | "HIGH" | "MEDIUM" | "LOW"
     reason:        human-readable explanation derived from metrics
-    auto_permitted: always False in v1.6
-    token:         signed JWT — present when ACTION_SECRET_KEY is configured
-    expires_at:    when the token expires (unix ts), None if no token
+    auto_permitted: always False
+    token:         always None (execution tokens have been removed)
+    expires_at:    always None
     health_score:  score at time of suggestion
     triggered_by:  which rule fired
     """
@@ -71,14 +70,11 @@ class ActionSuggestion:
 
 
 def suggest_actions(
-    health_score:    float,
-    status:          str,
-    service:         str,
-    metrics:         dict,
-    alerts:          List[dict],
-    user_id:         str         = "system",
-    client_ip:       Optional[str] = None,
-    incident_id:     Optional[str] = None,
+    health_score: float,
+    status:       str,
+    service:      str,
+    metrics:      dict,
+    alerts:       List[dict],
 ) -> List[ActionSuggestion]:
     """
     Map current health to a list of ActionSuggestions.
@@ -99,23 +95,8 @@ def suggest_actions(
     p95   = metrics.get("overall_p95_ms", 0)
     err   = metrics.get("error_rate", 0)
 
-    # Try to generate a signed token — fails silently if key not configured
-    def _make_token(action: str, sid: str) -> tuple:
-        try:
-            from fastapi_alertengine.actions.tokens import generate_action_token
-            import time as _t
-            token = generate_action_token(
-                action=action, service=service, user_id=user_id,
-                client_ip=client_ip, incident_id=incident_id,
-                health_score=health_score, suggestion_id=sid,
-            )
-            return token, _t.time() + 90
-        except Exception:
-            return None, None
-
     if health_score < 25:
         sid = str(uuid.uuid4())
-        tok, exp = _make_token("restart", sid)
         suggestions.append(ActionSuggestion(
             suggestion_id  = sid,
             action         = "restart",
@@ -126,15 +107,14 @@ def suggest_actions(
                 "Service restart is recommended to restore baseline performance."
             ),
             auto_permitted = False,
-            token          = tok,
-            expires_at     = exp,
+            token          = None,
+            expires_at     = None,
             health_score   = health_score,
             triggered_by   = "health_score < 25",
         ))
 
     if health_score < 40:
         sid = str(uuid.uuid4())
-        tok, exp = _make_token("alert", sid)
         suggestions.append(ActionSuggestion(
             suggestion_id  = sid,
             action         = "alert",
@@ -145,15 +125,14 @@ def suggest_actions(
                 f"Primary signal: P95={p95:.0f}ms, errors={err:.1%}."
             ),
             auto_permitted = False,
-            token          = tok,
-            expires_at     = exp,
+            token          = None,
+            expires_at     = None,
             health_score   = health_score,
             triggered_by   = "health_score < 40",
         ))
 
     if health_score < 60:
         sid = str(uuid.uuid4())
-        tok, exp = _make_token("notify", sid)
         suggestions.append(ActionSuggestion(
             suggestion_id  = sid,
             action         = "notify",
@@ -164,8 +143,8 @@ def suggest_actions(
                 f"Current P95: {p95:.0f}ms."
             ),
             auto_permitted = False,
-            token          = tok,
-            expires_at     = exp,
+            token          = None,
+            expires_at     = None,
             health_score   = health_score,
             triggered_by   = "health_score < 60",
         ))
