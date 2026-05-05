@@ -49,6 +49,9 @@ def validate_claude_output(raw: str) -> Dict[str, Any]:
     if data.get("action") not in VALID_ACTIONS:
         raise InvalidClaudeOutput(f"Invalid action: {data.get('action')}")
 
+    if data["action"] != "suppress" and not data.get("whatsapp_message"):
+        raise InvalidClaudeOutput("whatsapp_message required for non-suppress actions")
+
     return data
 
 
