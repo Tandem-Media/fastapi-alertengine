@@ -23,6 +23,14 @@ LOCK_TTL_S     = int(os.getenv("LOCK_TTL_S", "30"))
 LOCK_PREFIX    = "orchestrator:lock:"
 WORKER_ID      = str(uuid.uuid4())[:8]   # unique per process
 
+RELEASE_LOCK_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("del", KEYS[1])
+else
+    return 0
+end
+"""
+
 
 def _redis():
     import redis
@@ -60,10 +68,9 @@ def release_lock(incident_id: str, token: str) -> bool:
     """
     key = f"{LOCK_PREFIX}{incident_id}"
     try:
-        r       = _redis()
-        current = r.get(key)
-        if current == token:
-            r.delete(key)
+        r      = _redis()
+        result = r.eval(RELEASE_LOCK_SCRIPT, 1, key, token)
+        if result == 1:
             logger.debug("Lock released: %s", incident_id)
             return True
         else:
