@@ -1,4 +1,4 @@
-# load.py
+# load_generator.py
 """
 Load generator for AlertEngine demo.
 Higher concurrency = faster detection via _recent buffer.
