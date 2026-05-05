@@ -232,29 +232,34 @@ async def _process_tenant(tenant: dict) -> None:
         if not can_mutate_state():
             return
 
-        claude = await claude_decide(health, incident=None)
-        if not should_alert(score, err):
-            return
-        if claude["action"] not in ("escalate", "validate"):
-            return
+        incident_id = f"inc-{tenant_id}-{int(now)}"
+        async with incident_lock(incident_id) as acquired:
+            if not acquired:
+                return
 
-        incident_id     = f"inc-{tenant_id}-{int(now)}"
-        decision        = decide_new_incident(incident_id, score, p95, err, claude["confidence"])
-        valid, reason   = validate_decision_schema(decision)
-        if not valid:
-            logger.error("[%s] Invalid schema: %s", tenant_id, reason)
-            return
+            if not should_alert(score, err):
+                return
 
-        incident_record = open_incident(incident_id, score, p95, err)
-        incident_record["tenant_id"] = tenant_id
-        save_incident(incident_record)
-        _save_tenant_active(tenant_id, incident_id)
+            claude = await claude_decide(health, incident=None)
+            if claude["action"] not in ("escalate", "validate"):
+                return
 
-        append_event(incident_id=incident_id, stage="DETECTED",
-                     decision=claude["action"], reason=decision["reason"],
-                     confidence=decision["confidence"])
+            decision        = decide_new_incident(incident_id, score, p95, err, claude["confidence"])
+            valid, reason   = validate_decision_schema(decision)
+            if not valid:
+                logger.error("[%s] Invalid schema: %s", tenant_id, reason)
+                return
 
-        await _execute_actions(decision["actions"], incident_record, health, tenant_id)
+            incident_record = open_incident(incident_id, score, p95, err)
+            incident_record["tenant_id"] = tenant_id
+            save_incident(incident_record)
+            _save_tenant_active(tenant_id, incident_id)
+
+            append_event(incident_id=incident_id, stage="DETECTED",
+                         decision=claude["action"], reason=decision["reason"],
+                         confidence=decision["confidence"])
+
+            await _execute_actions(decision["actions"], incident_record, health, tenant_id)
         return
 
     if incident is None:
