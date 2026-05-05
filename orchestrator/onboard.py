@@ -27,6 +27,7 @@ from tenants import (
     mark_phone_verified,
     find_tenant_by_phone,
 )
+from plans import get_tenant_plan, incident_quota_remaining
 
 logger = logging.getLogger("orchestrator.onboard")
 
@@ -202,7 +203,6 @@ async def test_incident(tenant_id: str):
             detail=f"Tenant not active (status={tenant.get('status')}). Verify all contacts first."
         )
 
-    from plans import get_tenant_plan, incident_quota_remaining
     plan  = get_tenant_plan(tenant)
     quota = incident_quota_remaining(tenant)
     if quota == 0:
