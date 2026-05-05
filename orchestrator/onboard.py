@@ -228,7 +228,7 @@ async def test_incident(tenant_id: str):
     import asyncio
 
     # Don't overwrite real incident
-    existing = get_active_incident()
+    existing = get_active_incident(tenant_id=tenant_id)
     if existing and existing.get("tenant_id") == tenant_id:
         raise HTTPException(status_code=409, detail="Active incident already exists for this tenant")
 
