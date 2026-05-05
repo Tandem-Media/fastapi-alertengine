@@ -288,7 +288,9 @@ async def _process_tenant(tenant: dict) -> None:
 
             incident_record = open_incident(incident_id, score, p95, err)
             incident_record["tenant_id"] = tenant_id
-            save_incident(incident_record)
+            if not save_incident(incident_record):
+                logger.error("[%s] save_incident failed — aborting incident creation", tenant_id)
+                return
             _save_tenant_active(tenant_id, incident_id)
             updated_tenant = increment_incident_count(tenant)
             save_tenant(updated_tenant)

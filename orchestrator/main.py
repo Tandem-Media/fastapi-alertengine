@@ -31,7 +31,7 @@ def _check_redis() -> tuple[bool, str]:
         return False, str(e)
 
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import uvicorn
 
 health_app = FastAPI(title="AlertEngine Orchestrator")
@@ -104,12 +104,17 @@ def dlq_entries(tenant_id: str):
         from plans import get_tenant_plan
         tenant = get_tenant(tenant_id)
         if not tenant:
-            return {"error": "Tenant not found"}
+            raise HTTPException(status_code=404, detail="Tenant not found")
         plan = get_tenant_plan(tenant)
         if not plan.has_dlq_access:
-            return {"error": f"DLQ access not available on {tenant.get('plan', 'solo')} plan. Upgrade to startup or higher."}
+            raise HTTPException(
+                status_code=403,
+                detail=f"DLQ access not available on {tenant.get('plan', 'solo')} plan. Upgrade to startup or higher."
+            )
         from dlq import get_all
         return {"entries": get_all(limit=20)}
+    except HTTPException:
+        raise
     except Exception as e:
         return {"error": str(e)}
 
