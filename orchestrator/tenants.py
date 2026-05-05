@@ -222,8 +222,7 @@ def mark_phone_verified(tenant_id: str, phone: str) -> bool:
 def find_tenant_by_phone(phone: str) -> Optional[str]:
     """Find which tenant owns a phone number."""
     try:
-        tenant_id = _redis().get(f"{PHONE_INDEX_PREFIX}{phone}")
-        return tenant_id if tenant_id else None
+        return _redis().get(f"{PHONE_INDEX_PREFIX}{phone}")
     except Exception as e:
         logger.error("find_tenant_by_phone failed: %s", e)
     return None
