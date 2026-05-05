@@ -17,9 +17,8 @@ from typing import Dict, Any
 # 1. CLAUDE DECISION CONTRACT
 # ─────────────────────────────────────────────────────────────
 
-REQUIRED_FIELDS = {"decision", "confidence", "reason", "action"}
-VALID_DECISIONS = {"propose_fix", "validate_fix", "reject", "noop"}
-VALID_ACTIONS = {"restart_service", "scale_up", "ignore"}
+REQUIRED_FIELDS = {"action", "confidence", "reason", "whatsapp_message"}
+VALID_ACTIONS = {"escalate", "validate", "suppress", "recover"}
 
 CONFIDENCE_THRESHOLD = 0.6
 
@@ -41,18 +40,14 @@ def validate_claude_output(raw: str) -> Dict[str, Any]:
     if not REQUIRED_FIELDS.issubset(data.keys()):
         raise InvalidClaudeOutput("Missing required fields")
 
-    if data["decision"] not in VALID_DECISIONS:
-        raise InvalidClaudeOutput(f"Invalid decision: {data['decision']}")
-
     if not isinstance(data["confidence"], (int, float)):
         raise InvalidClaudeOutput("Confidence must be numeric")
 
     if data["confidence"] < CONFIDENCE_THRESHOLD:
         raise InvalidClaudeOutput("Confidence below threshold")
 
-    action = data.get("action", {})
-    if action.get("type") not in VALID_ACTIONS:
-        raise InvalidClaudeOutput("Invalid action type")
+    if data.get("action") not in VALID_ACTIONS:
+        raise InvalidClaudeOutput(f"Invalid action: {data.get('action')}")
 
     return data
 
