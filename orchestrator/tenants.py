@@ -18,11 +18,12 @@ from typing import Optional
 
 logger = logging.getLogger("orchestrator.tenants")
 
-TENANT_TTL       = 0        # permanent
-VERIFY_TTL       = 300      # 5 minutes
-TENANT_PREFIX    = "tenant:"
-VERIFY_PREFIX    = "verify:"
-ACTIVE_SET_KEY   = "orchestrator:active_tenants"
+TENANT_TTL        = 0        # permanent
+VERIFY_TTL        = 300      # 5 minutes
+TENANT_PREFIX     = "tenant:"
+VERIFY_PREFIX     = "verify:"
+ACTIVE_SET_KEY    = "orchestrator:active_tenants"
+PHONE_INDEX_PREFIX = "orchestrator:phone:"
 
 
 def _redis():
@@ -61,6 +62,9 @@ def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list) ->
     r = _redis()
     r.set(f"{TENANT_PREFIX}{tenant_id}", json.dumps(tenant))
     r.set(f"{TENANT_PREFIX}{tenant_id}:contacts", json.dumps(contacts))
+    r.sadd(ACTIVE_SET_KEY, tenant_id)
+    for number in whatsapp_numbers:
+        r.set(f"{PHONE_INDEX_PREFIX}{number}", tenant_id)
 
     logger.info("Tenant created: %s (%s) — %d contacts pending verification",
                 tenant_id, service_name, len(contacts))
@@ -110,14 +114,11 @@ def save_contacts(tenant_id: str, contacts: list) -> bool:
 def list_active_tenants() -> list:
     """Return all tenants with status=active."""
     try:
-        r    = _redis()
-        keys = r.keys(f"{TENANT_PREFIX}*")
-        # Filter out :contacts and :incident keys
-        tenant_keys = [k for k in keys
-                       if ":" not in k.replace(TENANT_PREFIX, "", 1)]
-        tenants = []
-        for key in tenant_keys:
-            data = r.get(key)
+        r          = _redis()
+        tenant_ids = r.smembers(ACTIVE_SET_KEY)
+        tenants    = []
+        for tenant_id in tenant_ids:
+            data = r.get(f"{TENANT_PREFIX}{tenant_id}")
             if data:
                 try:
                     t = json.loads(data)
@@ -137,7 +138,30 @@ def activate_tenant(tenant_id: str) -> bool:
         return False
     tenant["status"]       = "active"
     tenant["last_updated"] = time.time()
-    return save_tenant(tenant)
+    try:
+        r = _redis()
+        r.set(f"{TENANT_PREFIX}{tenant_id}", json.dumps(tenant))
+        r.sadd(ACTIVE_SET_KEY, tenant_id)
+        return True
+    except Exception as e:
+        logger.error("activate_tenant failed: %s", e)
+        return False
+
+
+def deactivate_tenant(tenant_id: str) -> bool:
+    """Set tenant status to inactive and remove from the active set."""
+    try:
+        r      = _redis()
+        tenant = get_tenant(tenant_id)
+        if tenant:
+            tenant["status"]       = "inactive"
+            tenant["last_updated"] = time.time()
+            r.set(f"{TENANT_PREFIX}{tenant_id}", json.dumps(tenant))
+        r.srem(ACTIVE_SET_KEY, tenant_id)
+        return True
+    except Exception as e:
+        logger.error("deactivate_tenant failed: %s", e)
+        return False
 
 
 # ── Verification ───────────────────────────────────────────────────────────────
@@ -198,16 +222,8 @@ def mark_phone_verified(tenant_id: str, phone: str) -> bool:
 def find_tenant_by_phone(phone: str) -> Optional[str]:
     """Find which tenant owns a phone number."""
     try:
-        r    = _redis()
-        keys = r.keys(f"{TENANT_PREFIX}*:contacts")
-        for key in keys:
-            data = r.get(key)
-            if data:
-                contacts = json.loads(data)
-                for c in contacts:
-                    if c["phone"] == phone:
-                        tenant_id = key.replace(TENANT_PREFIX, "").replace(":contacts", "")
-                        return tenant_id
+        tenant_id = _redis().get(f"{PHONE_INDEX_PREFIX}{phone}")
+        return tenant_id if tenant_id else None
     except Exception as e:
         logger.error("find_tenant_by_phone failed: %s", e)
     return None
