@@ -41,6 +41,7 @@ class OnboardRequest(BaseModel):
     service_name:      str
     health_url:        str
     whatsapp_numbers:  list[str]
+    plan:              str = "solo"
 
 
 class VerifyRequest(BaseModel):
@@ -98,6 +99,7 @@ def onboard(req: OnboardRequest):
         service_name=req.service_name,
         health_url=req.health_url,
         whatsapp_numbers=numbers,
+        plan=req.plan,
     )
 
     # Send verification codes
@@ -116,6 +118,7 @@ def onboard(req: OnboardRequest):
         "tenant_id":          tenant["tenant_id"],
         "service_name":       tenant["service_name"],
         "status":             "pending_verification",
+        "plan":               req.plan,
         "contacts_pending":   len(numbers),
         "verification_sent":  sent,
         "verification_failed": failed,
@@ -197,6 +200,15 @@ async def test_incident(tenant_id: str):
         raise HTTPException(
             status_code=400,
             detail=f"Tenant not active (status={tenant.get('status')}). Verify all contacts first."
+        )
+
+    from plans import get_tenant_plan, incident_quota_remaining
+    plan  = get_tenant_plan(tenant)
+    quota = incident_quota_remaining(tenant)
+    if quota == 0:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Incident quota exhausted for {plan.name} plan. Upgrade to continue."
         )
 
     # Inject a synthetic critical health payload

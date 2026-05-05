@@ -63,7 +63,10 @@ def push(
 
 
 def get_all(limit: int = 50) -> list:
-    """Return recent DLQ entries."""
+    """
+    Return recent DLQ entries.
+    Callers should verify tenant has_dlq_access before exposing results.
+    """
     try:
         r       = _redis()
         entries = r.lrange(DLQ_KEY, -limit, -1)

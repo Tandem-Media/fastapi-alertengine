@@ -35,19 +35,23 @@ def _redis():
 
 # ── Tenant CRUD ────────────────────────────────────────────────────────────────
 
-def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list) -> dict:
+def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list, plan: str = "solo") -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
     now       = time.time()
 
     tenant = {
-        "schema_version": "1.0.0",
-        "tenant_id":      tenant_id,
-        "service_name":   service_name,
-        "health_url":     health_url,
-        "status":         "pending_verification",
-        "created_at":     now,
-        "last_updated":   now,
+        "schema_version":       "1.0.0",
+        "tenant_id":            tenant_id,
+        "service_name":         service_name,
+        "health_url":           health_url,
+        "status":               "pending_verification",
+        "created_at":           now,
+        "last_updated":         now,
+        "plan":                 plan,
+        "incidents_this_month": 0,
+        "billing_cycle_start":  now,
+        "services_monitored":   [],
     }
 
     contacts = [

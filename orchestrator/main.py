@@ -98,8 +98,16 @@ def audit_log(incident_id: str):
 
 
 @health_app.get("/dlq")
-def dlq_entries():
+def dlq_entries(tenant_id: str):
     try:
+        from tenants import get_tenant
+        from plans import get_tenant_plan
+        tenant = get_tenant(tenant_id)
+        if not tenant:
+            return {"error": "Tenant not found"}
+        plan = get_tenant_plan(tenant)
+        if not plan.has_dlq_access:
+            return {"error": f"DLQ access not available on {tenant.get('plan', 'solo')} plan. Upgrade to startup or higher."}
         from dlq import get_all
         return {"entries": get_all(limit=20)}
     except Exception as e:

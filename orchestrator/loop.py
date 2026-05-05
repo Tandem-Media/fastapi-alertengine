@@ -55,7 +55,13 @@ from degraded import (
     can_send_notifications, record_redis_failure,
     record_notify_failure, record_success,
 )
-from tenants import list_active_tenants, get_verified_numbers
+from tenants import list_active_tenants, get_verified_numbers, save_tenant
+from plans import (
+    get_tenant_plan,
+    can_monitor_more_services,
+    incident_quota_remaining,
+    increment_incident_count,
+)
 
 logger = logging.getLogger("orchestrator.loop")
 
@@ -159,6 +165,7 @@ async def _execute_actions(
     incident: dict,
     health: dict,
     tenant_id: str,
+    tenant: dict,
 ) -> dict:
     incident_id = incident.get("incident_id", "unknown")
     stage       = incident.get("stage", "UNKNOWN")
@@ -194,6 +201,11 @@ async def _execute_actions(
             incident = {**incident, "token": token, "recovery_url": url}
 
         elif action_type == "ESCALATE":
+            plan = get_tenant_plan(tenant)
+            if not plan.has_voice_escalation:
+                logger.warning("[%s] Voice escalation not available on plan %s",
+                               tenant_id, tenant.get("plan", "solo"))
+                continue
             if not can_escalate():
                 continue
             duration = time.time() - incident.get("started_at", time.time())
@@ -240,6 +252,26 @@ async def _process_tenant(tenant: dict) -> None:
             if not should_alert(score, err):
                 return
 
+            # Plan gate 1: service limit
+            if not can_monitor_more_services(tenant):
+                logger.warning("[%s] Service limit reached for plan %s — incident suppressed",
+                               tenant_id, tenant.get("plan", "solo"))
+                return
+
+            # Plan gate 2: incident quota
+            quota = incident_quota_remaining(tenant)
+            if quota == 0:
+                logger.warning("[%s] Incident quota exhausted for plan %s — incident suppressed",
+                               tenant_id, tenant.get("plan", "solo"))
+                return
+
+            # Plan gate 3: Claude decision feature flag
+            plan = get_tenant_plan(tenant)
+            if not plan.has_claude_decision:
+                logger.warning("[%s] Claude decisions not available on plan %s",
+                               tenant_id, tenant.get("plan", "solo"))
+                return
+
             if not renew_lock(incident_id, token):
                 logger.warning("Lock renewal failed for %s — skipping cycle", incident_id)
                 return
@@ -258,12 +290,14 @@ async def _process_tenant(tenant: dict) -> None:
             incident_record["tenant_id"] = tenant_id
             save_incident(incident_record)
             _save_tenant_active(tenant_id, incident_id)
+            updated_tenant = increment_incident_count(tenant)
+            save_tenant(updated_tenant)
 
             append_event(incident_id=incident_id, stage="DETECTED",
                          decision=claude["action"], reason=decision["reason"],
                          confidence=decision["confidence"])
 
-            await _execute_actions(decision["actions"], incident_record, health, tenant_id)
+            await _execute_actions(decision["actions"], incident_record, health, tenant_id, tenant)
         return
 
     if incident is None:
@@ -298,7 +332,7 @@ async def _process_tenant(tenant: dict) -> None:
                 append_event(incident_id=incident_id, stage="RECOVERED",
                              decision=claude["action"], reason=decision["reason"],
                              confidence=decision["confidence"])
-                await _execute_actions(decision["actions"], updated, health, tenant_id)
+                await _execute_actions(decision["actions"], updated, health, tenant_id, tenant)
             return
 
         # Pipeline advance
@@ -313,7 +347,7 @@ async def _process_tenant(tenant: dict) -> None:
             return
 
         updated = apply_transition(incident, next_stage)
-        updated = await _execute_actions(decision["actions"], updated, health, tenant_id)
+        updated = await _execute_actions(decision["actions"], updated, health, tenant_id, tenant)
         save_incident(updated)
         append_event(incident_id=incident_id, stage=next_stage,
                      decision=claude["action"], reason=decision["reason"],
