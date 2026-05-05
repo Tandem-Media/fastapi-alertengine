@@ -20,22 +20,32 @@ logger = logging.getLogger("orchestrator.pipeline")
 
 # Valid stages in order
 STAGES = [
-    "detected",
-    "proposed",
-    "validated",
-    "authorized",
-    "executed",
-    "resolved",
+    "DETECTED",
+    "PROPOSED",
+    "VALIDATED",
+    "AUTHORIZED",
+    "EXECUTED",
+    "RESOLVED",
 ]
 
 # Minimum seconds before each transition (demo-tunable)
 STAGE_GATES = {
-    "detected":  0,    # immediate
-    "proposed":  5,    # 5s after detected
-    "validated": 8,    # 8s after proposed
-    "authorized": 0,   # immediate on tap
-    "executed":  0,    # immediate on authorized
-    "resolved":  0,    # immediate on recovery
+    "DETECTED":   0,    # immediate
+    "PROPOSED":   5,    # 5s after detected
+    "VALIDATED":  8,    # 8s after proposed
+    "AUTHORIZED": 0,    # immediate on tap
+    "EXECUTED":   0,    # immediate on authorized
+    "RESOLVED":   0,    # immediate on recovery
+}
+
+ALLOWED_TRANSITIONS = {
+    None:          "DETECTED",
+    "DETECTED":    "PROPOSED",
+    "PROPOSED":    "VALIDATED",
+    "VALIDATED":   "AUTHORIZED",
+    "AUTHORIZED":  "EXECUTED",
+    "EXECUTED":    "RESOLVED",
+    "RESOLVED":    None,
 }
 
 
@@ -44,7 +54,7 @@ def new_incident(incident_id: str, score: float, p95: float, err: float) -> dict
     now = time.time()
     return {
         "id":              incident_id,
-        "stage":           "detected",
+        "stage":           "DETECTED",
         "stage_at":        now,
         "started_at":      now,
         "score":           score,
@@ -55,7 +65,7 @@ def new_incident(incident_id: str, score: float, p95: float, err: float) -> dict
         "voice_sent":      False,
         "secondary_sent":  False,
         "resolved_at":     None,
-        "history":         [{"stage": "detected", "at": now}],
+        "history":         [{"stage": "DETECTED", "at": now}],
     }
 
 
@@ -76,7 +86,7 @@ def can_transition(incident: dict, target_stage: str) -> tuple[bool, str]:
     target_idx  = STAGES.index(target_stage)
 
     # Allow forward transitions only (except resolved which can come from anywhere)
-    if target_stage != "resolved" and target_idx != current_idx + 1:
+    if target_stage != "RESOLVED" and target_idx != current_idx + 1:
         return False, f"Cannot jump from {current} to {target_stage}"
 
     # Check stage gate
@@ -107,7 +117,7 @@ def transition(incident: dict, target_stage: str, metadata: Optional[dict] = Non
     incident["stage"]    = target_stage
     incident["stage_at"] = now
 
-    if target_stage == "resolved":
+    if target_stage == "RESOLVED":
         incident["resolved_at"] = now
 
     entry = {"stage": target_stage, "at": now}
@@ -121,7 +131,7 @@ def transition(incident: dict, target_stage: str, metadata: Optional[dict] = Non
 
 def is_terminal(incident: dict) -> bool:
     """Returns True if incident is in a terminal state."""
-    return incident.get("stage") in ("resolved",)
+    return incident.get("stage") in ("RESOLVED",)
 
 
 def stage_age(incident: dict) -> float:
@@ -142,7 +152,7 @@ def next_required_stage(incident: dict) -> Optional[str]:
     Returns None if not ready or already terminal.
     """
     current = incident.get("stage")
-    if not current or current == "resolved":
+    if not current or current == "RESOLVED":
         return None
 
     try:
@@ -156,7 +166,7 @@ def next_required_stage(incident: dict) -> Optional[str]:
     next_stage = STAGES[idx + 1]
 
     # Don't auto-advance past validated — requires human authorization
-    if next_stage in ("authorized", "executed"):
+    if next_stage in ("AUTHORIZED", "EXECUTED"):
         return None
 
     gate = STAGE_GATES.get(next_stage, 0)
