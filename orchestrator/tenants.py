@@ -75,6 +75,16 @@ def create_tenant(
     r.set(f"{TENANT_PREFIX}{tenant_id}", json.dumps(tenant))
     r.set(f"{TENANT_PREFIX}{tenant_id}:contacts", json.dumps(contacts))
 
+    # Telegram tenants are active immediately — register in the active set now.
+    # WhatsApp tenants are added to the active set by activate_tenant() after verification.
+    # Note: if SADD fails, list_active_tenants() still finds this tenant via key scan
+    # (status=="active" in the record is authoritative). Log the error but don't fail.
+    if notification_channel == "telegram":
+        try:
+            r.sadd(ACTIVE_SET_KEY, tenant_id)
+        except Exception as e:
+            logger.error("create_tenant: failed to SADD to active set: %s", e)
+
     logger.info("Tenant created: %s (%s) — %d contacts pending verification",
                 tenant_id, service_name, len(contacts))
     return tenant
@@ -150,7 +160,15 @@ def activate_tenant(tenant_id: str) -> bool:
         return False
     tenant["status"]       = "active"
     tenant["last_updated"] = time.time()
-    return save_tenant(tenant)
+    ok = save_tenant(tenant)
+    if ok:
+        # Keep ACTIVE_SET_KEY in sync. If SADD fails, list_active_tenants() still
+        # finds this tenant via key scan (status=="active" is authoritative).
+        try:
+            _redis().sadd(ACTIVE_SET_KEY, tenant_id)
+        except Exception as e:
+            logger.error("activate_tenant: failed to SADD to active set: %s", e)
+    return ok
 
 
 # ── Verification ───────────────────────────────────────────────────────────────
