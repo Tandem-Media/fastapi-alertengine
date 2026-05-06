@@ -34,19 +34,32 @@ def _redis():
 
 # ── Tenant CRUD ────────────────────────────────────────────────────────────────
 
-def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list) -> dict:
+def create_tenant(
+    service_name: str,
+    health_url: str,
+    whatsapp_numbers: list,
+    notification_channel: str = "whatsapp",
+    telegram_bot_token: Optional[str] = None,
+    telegram_chat_id: Optional[str] = None,
+) -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
     now       = time.time()
 
+    # Telegram tenants have no phone contacts to verify — activate immediately
+    initial_status = "active" if notification_channel == "telegram" else "pending_verification"
+
     tenant = {
-        "schema_version": "1.0.0",
-        "tenant_id":      tenant_id,
-        "service_name":   service_name,
-        "health_url":     health_url,
-        "status":         "pending_verification",
-        "created_at":     now,
-        "last_updated":   now,
+        "schema_version":        "1.0.0",
+        "tenant_id":             tenant_id,
+        "service_name":          service_name,
+        "health_url":            health_url,
+        "status":                initial_status,
+        "notification_channel":  notification_channel,
+        "telegram_bot_token":    telegram_bot_token,
+        "telegram_chat_id":      telegram_chat_id,
+        "created_at":            now,
+        "last_updated":          now,
     }
 
     contacts = [

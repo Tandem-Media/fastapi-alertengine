@@ -152,14 +152,62 @@ async def _notify_tenant(
         logger.error("Notification failed → DLQ: %s | %s | %s", incident_id, action_type, e)
 
 
+# ── Tenant-aware notification router ──────────────────────────────────────────
+
+async def _send_tenant_notification(
+    tenant: dict,
+    notification_type: str,
+    incident_id: str,
+    score: float,
+    p95: float = 0.0,
+    err: float = 0.0,
+    recovery_url: str = "",
+    duration_s: float = 0.0,
+) -> bool:
+    """
+    Route notification based on tenant channel and type.
+    """
+    channel = tenant.get("notification_channel", "whatsapp")
+
+    if channel == "telegram":
+        from telegram_notifier import (
+            send_telegram_detection,
+            send_telegram_validation,
+            send_telegram_recovery,
+        )
+        bot_token = tenant.get("telegram_bot_token")
+        chat_id   = tenant.get("telegram_chat_id")
+
+        if notification_type == "DETECTION":
+            return await send_telegram_detection(
+                bot_token, chat_id, incident_id, score, p95, err)
+        elif notification_type == "VALIDATION":
+            return await send_telegram_validation(
+                bot_token, chat_id, incident_id, score, p95, recovery_url)
+        elif notification_type == "RECOVERY":
+            return await send_telegram_recovery(
+                bot_token, chat_id, incident_id, score, duration_s)
+        return False
+
+    # WhatsApp — use existing functions
+    if notification_type == "DETECTION":
+        return await send_detection(incident_id, score, p95, err)
+    elif notification_type == "VALIDATION":
+        return await send_validation(incident_id, score, p95, recovery_url)
+    elif notification_type == "RECOVERY":
+        return await send_recovery(incident_id, score, duration_s)
+    return False
+
+
 # ── Action executor ────────────────────────────────────────────────────────────
 
 async def _execute_actions(
     actions: list,
     incident: dict,
     health: dict,
-    tenant_id: str,
+    tenant: dict,
 ) -> dict:
+    tenant_id   = tenant["tenant_id"]
     incident_id = incident.get("incident_id", "unknown")
     stage       = incident.get("stage", "UNKNOWN")
     score       = health.get("health_score", {}).get("score", 100)
@@ -176,15 +224,18 @@ async def _execute_actions(
             notif_type = action.get("payload", {}).get("type")
             if notif_type == "CRITICAL":
                 fire(_notify_tenant(tenant_id, incident_id, stage, "SEND_DETECTION",
-                                    send_detection, incident_id, score, p95, err))
+                                    _send_tenant_notification, tenant, "DETECTION",
+                                    incident_id, score, p95, err))
             elif notif_type == "VALIDATION":
                 url = incident.get("recovery_url", "")
                 fire(_notify_tenant(tenant_id, incident_id, stage, "SEND_VALIDATION",
-                                    send_validation, incident_id, score, p95, url))
+                                    _send_tenant_notification, tenant, "VALIDATION",
+                                    incident_id, score, p95, 0.0, url))
             elif notif_type == "RECOVERY":
                 duration = time.time() - incident.get("started_at", time.time())
                 fire(_notify_tenant(tenant_id, incident_id, stage, "SEND_RECOVERY",
-                                    send_recovery, incident_id, score, duration))
+                                    _send_tenant_notification, tenant, "RECOVERY",
+                                    incident_id, score, duration_s=duration))
 
         elif action_type == "GENERATE_TOKEN":
             if not can_mutate_state():
@@ -254,7 +305,7 @@ async def _process_tenant(tenant: dict) -> None:
                      decision=claude["action"], reason=decision["reason"],
                      confidence=decision["confidence"])
 
-        await _execute_actions(decision["actions"], incident_record, health, tenant_id)
+        await _execute_actions(decision["actions"], incident_record, health, tenant)
         return
 
     if incident is None:
@@ -285,7 +336,7 @@ async def _process_tenant(tenant: dict) -> None:
                 append_event(incident_id=incident_id, stage="RECOVERED",
                              decision=claude["action"], reason=decision["reason"],
                              confidence=decision["confidence"])
-                await _execute_actions(decision["actions"], updated, health, tenant_id)
+                await _execute_actions(decision["actions"], updated, health, tenant)
             return
 
         # Pipeline advance
@@ -300,7 +351,7 @@ async def _process_tenant(tenant: dict) -> None:
             return
 
         updated = apply_transition(incident, next_stage)
-        updated = await _execute_actions(decision["actions"], updated, health, tenant_id)
+        updated = await _execute_actions(decision["actions"], updated, health, tenant)
         save_incident(updated)
         append_event(incident_id=incident_id, stage=next_stage,
                      decision=claude["action"], reason=decision["reason"],
