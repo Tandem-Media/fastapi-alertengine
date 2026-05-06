@@ -244,3 +244,31 @@ async def send_secondary_escalation(incident_id: str, duration_s: float, score: 
             _send_fallback("Escalation", body)
             return False
     await _run_in_executor(_send)
+
+
+# ── Channel-aware routing ──────────────────────────────────────────────────────
+
+async def send_via_channel(
+    tenant: dict,
+    subject: str,
+    body: str,
+) -> bool:
+    """
+    Route notification to the tenant's configured channel.
+    WhatsApp → existing _send_with_fallback()
+    Telegram → telegram_notifier
+    """
+    channel = tenant.get("notification_channel", "whatsapp")
+
+    if channel == "telegram":
+        from telegram_notifier import send_telegram
+        bot_token = tenant.get("telegram_bot_token")
+        chat_id   = tenant.get("telegram_chat_id")
+        full_message = f"*{subject}*\n\n{body}"
+        return await send_telegram(bot_token, chat_id, full_message)
+
+    # Default: WhatsApp via existing _send_with_fallback
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, lambda: _send_with_fallback(subject, body)
+    )
