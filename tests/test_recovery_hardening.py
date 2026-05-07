@@ -100,12 +100,8 @@ def test_onboard_test_incident_passes_tenant_id_to_token_generation():
     assert result["recovery_url"].endswith("token-123")
 
 
-def test_env_example_documents_action_base_url_primary_and_alertengine_fallback():
-    env_example = (
-        Path(__file__).resolve().parents[1]
-        / "orchestrator"
-        / ".env.example"
-    ).read_text(encoding="utf-8")
+def test_env_example_documents_action_url_config():
+    env_example = (ORCHESTRATOR_DIR / ".env.example").read_text(encoding="utf-8")
 
     assert "ACTION_BASE_URL" in env_example
     assert "primary base URL for recovery links" in env_example
