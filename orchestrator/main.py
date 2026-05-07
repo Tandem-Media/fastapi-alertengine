@@ -138,6 +138,33 @@ def dlq_entries(tenant_id: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@health_app.get("/action/recover")
+async def recover_action(token: str):
+    """
+    Human-authorized recovery endpoint.
+    Validates JWT token, enforces replay protection,
+    and returns authorization confirmation.
+    Called when engineer taps the recovery link in WhatsApp/Telegram.
+    """
+    try:
+        from action_generator import validate_and_consume
+        valid, payload, reason = validate_and_consume(token)
+        if not valid:
+            raise HTTPException(status_code=401, detail=reason)
+        return {
+            "authorized":    True,
+            "incident_id":   payload.get("incident_id"),
+            "tenant_id":     payload.get("tenant_id"),
+            "action":        payload.get("action"),
+            "authorized_at": time.time(),
+            "message":       "Recovery action authorized. System will execute fix.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def _run_loop_safe():
     required = ["ALERTENGINE_BASE_URL", "ANTHROPIC_API_KEY", "ALERT_SECRET", "REDIS_URL"]
     missing  = [k for k in required if not os.getenv(k)]
