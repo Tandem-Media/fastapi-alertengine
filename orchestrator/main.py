@@ -109,7 +109,8 @@ def delivery_log(incident_id: str):
             "log":         log,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("delivery_log error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @health_app.get("/dlq")

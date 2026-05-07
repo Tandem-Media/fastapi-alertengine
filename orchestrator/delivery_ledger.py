@@ -65,7 +65,7 @@ def record(
         return False
 
 
-def record_from_result(result) -> bool:
+def record_from_result(result: "DeliveryResult") -> bool:
     """
     Record a DeliveryResult from providers/base.py.
     Convenience wrapper.
