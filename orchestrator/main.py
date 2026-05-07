@@ -134,7 +134,8 @@ def dlq_entries(tenant_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        return {"error": str(e)}
+        logger.error("dlq_entries error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def _run_loop_safe():
