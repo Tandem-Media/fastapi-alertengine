@@ -97,6 +97,21 @@ def audit_log(incident_id: str):
         return {"error": str(e)}
 
 
+@health_app.get("/delivery/{incident_id}")
+def delivery_log(incident_id: str):
+    try:
+        from delivery_ledger import get_delivery_log, all_failed
+        log = get_delivery_log(incident_id)
+        return {
+            "incident_id": incident_id,
+            "attempts":    len(log),
+            "all_failed":  all_failed(incident_id),
+            "log":         log,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @health_app.get("/dlq")
 def dlq_entries(tenant_id: str):
     try:
