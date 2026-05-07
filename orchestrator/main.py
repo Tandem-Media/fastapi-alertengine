@@ -79,10 +79,12 @@ def status():
         from tenants import list_active_tenants
         from degraded import status as degraded_status
         from dlq import get_count as dlq_count
+        from pipeline import STAGE_GATES
         return {
             "active_tenants": len(list_active_tenants()),
             "degraded_mode":  degraded_status(),
             "dlq_count":      dlq_count(),
+            "stage_gates":    STAGE_GATES,
         }
     except Exception as e:
         return {"error": str(e)}
@@ -95,6 +97,22 @@ def audit_log(incident_id: str):
         return {"incident_id": incident_id, "log": get_audit_log(incident_id)}
     except Exception as e:
         return {"error": str(e)}
+
+
+@health_app.get("/delivery/{incident_id}")
+def delivery_log(incident_id: str):
+    try:
+        from delivery_ledger import get_delivery_log, all_failed
+        log = get_delivery_log(incident_id)
+        return {
+            "incident_id": incident_id,
+            "attempts":    len(log),
+            "all_failed":  all_failed(incident_id),
+            "log":         log,
+        }
+    except Exception as e:
+        logger.error("delivery_log error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @health_app.get("/dlq")
@@ -116,7 +134,8 @@ def dlq_entries(tenant_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("dlq_entries error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def _run_loop_safe():

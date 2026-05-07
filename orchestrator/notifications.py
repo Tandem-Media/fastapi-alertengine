@@ -246,6 +246,56 @@ async def send_secondary_escalation(incident_id: str, duration_s: float, score: 
     await _run_in_executor(_send)
 
 
+# ── Provider-based dispatch ────────────────────────────────────────────────────
+
+async def dispatch(
+    tenant: dict,
+    incident_id: str,
+    message: str,
+) -> bool:
+    """
+    Route and deliver a notification via the tenant's configured channel.
+    Records every attempt in the delivery ledger.
+    Falls back to webhook if primary fails.
+    Never raises.
+    """
+    from providers import WhatsAppProvider, TelegramProvider, WebhookProvider
+    from delivery_ledger import record_from_result
+
+    channel = tenant.get("notification_channel", "whatsapp")
+
+    # Select primary provider
+    if channel == "telegram":
+        primary = TelegramProvider()
+    else:
+        primary = WhatsAppProvider()
+
+    # Attempt primary
+    result = await primary.send(tenant, incident_id, message)
+    record_from_result(result)
+
+    if result.success:
+        return True
+
+    # Primary failed — attempt webhook fallback
+    logger.warning("Primary failed (%s) — trying webhook fallback", channel)
+    fallback        = WebhookProvider()
+    fallback_result = await fallback.send(tenant, incident_id, message)
+    record_from_result(fallback_result)
+
+    if not fallback_result.success:
+        logger.critical(
+            "ALL notifications failed for incident=%s tenant=%s — "
+            "primary=%s fallback=%s",
+            incident_id,
+            tenant.get("tenant_id"),
+            result.error,
+            fallback_result.error,
+        )
+
+    return fallback_result.success
+
+
 # ── Channel-aware routing ──────────────────────────────────────────────────────
 
 async def send_via_channel(

@@ -46,7 +46,7 @@ from notifications import (
 from action_generator import generate_recovery_token
 from claude_engine import get_decision as claude_decide
 from policy import should_alert, should_escalate_voice, should_escalate_secondary
-from lock import incident_lock
+from lock import incident_lock, renew_lock
 from idempotency import execute_once, make_action_id
 from audit import append_event
 from dlq import push as dlq_push
@@ -55,7 +55,13 @@ from degraded import (
     can_send_notifications, record_redis_failure,
     record_notify_failure, record_success,
 )
-from tenants import list_active_tenants, get_verified_numbers
+from tenants import list_active_tenants, get_verified_numbers, save_tenant
+from plans import (
+    get_tenant_plan,
+    can_monitor_more_services,
+    incident_quota_remaining,
+    increment_incident_count,
+)
 
 logger = logging.getLogger("orchestrator.loop")
 
@@ -245,6 +251,11 @@ async def _execute_actions(
             incident = {**incident, "token": token, "recovery_url": url}
 
         elif action_type == "ESCALATE":
+            plan = get_tenant_plan(tenant)
+            if not plan.has_voice_escalation:
+                logger.warning("[%s] Voice escalation not available on plan %s",
+                               tenant_id, tenant.get("plan", "solo"))
+                continue
             if not can_escalate():
                 continue
             duration = time.time() - incident.get("started_at", time.time())
@@ -283,29 +294,62 @@ async def _process_tenant(tenant: dict) -> None:
         if not can_mutate_state():
             return
 
-        claude = await claude_decide(health, incident=None)
-        if not should_alert(score, err):
-            return
-        if claude["action"] not in ("escalate", "validate"):
-            return
+        incident_id = f"inc-{tenant_id}-{int(now)}"
+        async with incident_lock(incident_id) as token:
+            if not token:
+                return
 
-        incident_id     = f"inc-{tenant_id}-{int(now)}"
-        decision        = decide_new_incident(incident_id, score, p95, err, claude["confidence"])
-        valid, reason   = validate_decision_schema(decision)
-        if not valid:
-            logger.error("[%s] Invalid schema: %s", tenant_id, reason)
-            return
+            if not should_alert(score, err):
+                return
 
-        incident_record = open_incident(incident_id, score, p95, err)
-        incident_record["tenant_id"] = tenant_id
-        save_incident(incident_record)
-        _save_tenant_active(tenant_id, incident_id)
+            # Plan gate 1: service limit
+            if not can_monitor_more_services(tenant):
+                logger.warning("[%s] Service limit reached for plan %s — incident suppressed",
+                               tenant_id, tenant.get("plan", "solo"))
+                return
 
-        append_event(incident_id=incident_id, stage="DETECTED",
-                     decision=claude["action"], reason=decision["reason"],
-                     confidence=decision["confidence"])
+            # Plan gate 2: incident quota
+            quota = incident_quota_remaining(tenant)
+            if quota == 0:
+                logger.warning("[%s] Incident quota exhausted for plan %s — incident suppressed",
+                               tenant_id, tenant.get("plan", "solo"))
+                return
 
-        await _execute_actions(decision["actions"], incident_record, health, tenant)
+            # Plan gate 3: Claude decision feature flag
+            plan = get_tenant_plan(tenant)
+            if not plan.has_claude_decision:
+                logger.warning("[%s] Claude decisions not available on plan %s",
+                               tenant_id, tenant.get("plan", "solo"))
+                return
+
+            if not renew_lock(incident_id, token):
+                logger.warning("Lock renewal failed for %s — skipping cycle", incident_id)
+                return
+
+            claude = await claude_decide(health, incident=None)
+            if claude["action"] not in ("escalate", "validate"):
+                return
+
+            decision        = decide_new_incident(incident_id, score, p95, err, claude["confidence"])
+            valid, reason   = validate_decision_schema(decision)
+            if not valid:
+                logger.error("[%s] Invalid schema: %s", tenant_id, reason)
+                return
+
+            incident_record = open_incident(incident_id, score, p95, err)
+            incident_record["tenant_id"] = tenant_id
+            if not save_incident(incident_record):
+                logger.error("[%s] save_incident failed — aborting incident creation", tenant_id)
+                return
+            _save_tenant_active(tenant_id, incident_id)
+            updated_tenant = increment_incident_count(tenant)
+            save_tenant(updated_tenant)
+
+            append_event(incident_id=incident_id, stage="DETECTED",
+                         decision=claude["action"], reason=decision["reason"],
+                         confidence=decision["confidence"])
+
+            await _execute_actions(decision["actions"], incident_record, health, tenant)
         return
 
     if incident is None:
@@ -314,8 +358,12 @@ async def _process_tenant(tenant: dict) -> None:
     incident_id = incident["incident_id"]
 
     # Acquire lock per tenant incident
-    async with incident_lock(incident_id) as acquired:
-        if not acquired:
+    async with incident_lock(incident_id) as token:
+        if not token:
+            return
+
+        if not renew_lock(incident_id, token):
+            logger.warning("Lock renewal failed for %s — skipping cycle", incident_id)
             return
 
         # Recovery

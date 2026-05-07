@@ -1,4 +1,5 @@
-# fastapi_alertengine/engine.py
+# Standalone engine example.
+# See fastapi_alertengine/engine.py for the full implementation.
 """
 v1.5 — Adaptive Intelligence Layer
 

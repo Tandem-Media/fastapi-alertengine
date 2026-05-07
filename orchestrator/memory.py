@@ -19,7 +19,6 @@ logger = logging.getLogger("orchestrator.memory")
 
 INCIDENT_TTL  = 86400   # 24 hours
 KEY_PREFIX    = "orchestrator:incident:"
-ACTIVE_KEY    = "orchestrator:active_incident"
 
 
 def _redis():
@@ -30,9 +29,9 @@ def _redis():
 
 # ── Write ──────────────────────────────────────────────────────────────────────
 
-def save_incident(incident: dict) -> bool:
+def save_incident(incident: dict, tenant_id: Optional[str] = None) -> bool:
     """Persist full incident state to Redis. Returns True on success."""
-    incident_id = incident.get("id")
+    incident_id = incident.get("incident_id") or incident.get("id")
     if not incident_id:
         logger.error("Cannot save incident without id")
         return False
@@ -40,7 +39,8 @@ def save_incident(incident: dict) -> bool:
         r   = _redis()
         key = f"{KEY_PREFIX}{incident_id}"
         r.setex(key, INCIDENT_TTL, json.dumps(incident))
-        r.setex(ACTIVE_KEY, INCIDENT_TTL, incident_id)
+        if tenant_id:
+            r.setex(f"orchestrator:active_incident:{tenant_id}", INCIDENT_TTL, incident_id)
         logger.debug("Incident saved: %s", incident_id)
         return True
     except Exception as e:
@@ -48,11 +48,11 @@ def save_incident(incident: dict) -> bool:
         return False
 
 
-def resolve_incident(incident_id: str) -> bool:
+def resolve_incident(incident_id: str, tenant_id: str) -> bool:
     """Mark incident as resolved — remove from active key."""
     try:
         r = _redis()
-        r.delete(ACTIVE_KEY)
+        r.delete(f"orchestrator:active_incident:{tenant_id}")
         logger.info("Incident resolved in store: %s", incident_id)
         return True
     except Exception as e:
@@ -76,11 +76,11 @@ def get_incident(incident_id: str) -> Optional[dict]:
         return None
 
 
-def get_active_incident() -> Optional[dict]:
+def get_active_incident(tenant_id: str) -> Optional[dict]:
     """Load the currently active incident. Returns None if no active incident."""
     try:
         r           = _redis()
-        incident_id = r.get(ACTIVE_KEY)
+        incident_id = r.get(f"orchestrator:active_incident:{tenant_id}")
         if not incident_id:
             return None
         return get_incident(incident_id)
@@ -89,10 +89,10 @@ def get_active_incident() -> Optional[dict]:
         return None
 
 
-def get_active_incident_id() -> Optional[str]:
+def get_active_incident_id(tenant_id: str) -> Optional[str]:
     """Return active incident ID only."""
     try:
-        return _redis().get(ACTIVE_KEY)
+        return _redis().get(f"orchestrator:active_incident:{tenant_id}")
     except Exception as e:
         logger.error("Failed to get active incident id: %s", e)
         return None

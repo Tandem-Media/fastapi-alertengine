@@ -5,35 +5,37 @@ Plan definitions and tenant plan lookup.
 Plans (in ascending order):
   solo       — free tier, 1 service, 50 incidents/month, no DLQ, no voice escalation
   startup    — 5 services, 200 incidents/month, DLQ + voice escalation
-  scale      — 20 services, 1000 incidents/month, full feature set
+  teams      — 20 services, 1000 incidents/month, full feature set
   enterprise — unlimited services and incidents, full feature set
 """
 
 import copy
 import time
+from typing import Literal, Dict
 
 from pydantic import BaseModel
 
-from tenants import save_tenant
+
+PlanName = Literal["solo", "startup", "teams", "enterprise"]
 
 
 class TenantPlan(BaseModel):
-    name: str
+    name: PlanName
     max_services: int               # -1 = unlimited
     included_incidents: int         # -1 = unlimited
     overage_fee_per_incident: float
-    has_dlq_access: bool
-    has_claude_decision: bool
-    has_voice_escalation: bool
-    has_custom_thresholds: bool
+    has_dlq_access: bool = False
+    has_claude_decision: bool = True
+    has_voice_escalation: bool = False
+    has_custom_thresholds: bool = False
 
 
-_PLANS: dict[str, TenantPlan] = {
+PLANS: Dict[str, TenantPlan] = {
     "solo": TenantPlan(
         name="solo",
         max_services=1,
         included_incidents=50,
-        overage_fee_per_incident=0.0,
+        overage_fee_per_incident=0.10,
         has_dlq_access=False,
         has_claude_decision=True,
         has_voice_escalation=False,
@@ -49,11 +51,11 @@ _PLANS: dict[str, TenantPlan] = {
         has_voice_escalation=True,
         has_custom_thresholds=False,
     ),
-    "scale": TenantPlan(
-        name="scale",
+    "teams": TenantPlan(
+        name="teams",
         max_services=20,
         included_incidents=1000,
-        overage_fee_per_incident=0.03,
+        overage_fee_per_incident=0.02,
         has_dlq_access=True,
         has_claude_decision=True,
         has_voice_escalation=True,
@@ -71,13 +73,18 @@ _PLANS: dict[str, TenantPlan] = {
     ),
 }
 
-_DEFAULT_PLAN = _PLANS["solo"]
+DEFAULT_PLAN = "solo"
+
+
+def get_plan(plan_name: str) -> TenantPlan:
+    """Return plan by name. Falls back to solo if unknown."""
+    return PLANS.get(plan_name, PLANS[DEFAULT_PLAN])
 
 
 def get_tenant_plan(tenant: dict) -> TenantPlan:
-    """Return the TenantPlan for the given tenant dict."""
-    plan_name = tenant.get("plan", "solo")
-    return _PLANS.get(plan_name, _DEFAULT_PLAN)
+    """Extract and return the TenantPlan from a tenant dict."""
+    plan_name = tenant.get("plan", DEFAULT_PLAN)
+    return get_plan(plan_name)
 
 
 def can_monitor_more_services(tenant: dict) -> bool:
@@ -85,8 +92,9 @@ def can_monitor_more_services(tenant: dict) -> bool:
     plan = get_tenant_plan(tenant)
     if plan.max_services == -1:
         return True
-    current = tenant.get("service_count", 1)
-    return int(current) < plan.max_services
+    current = tenant.get("service_count", tenant.get("services_monitored", []))
+    count = len(current) if isinstance(current, list) else int(current)
+    return count < plan.max_services
 
 
 def incident_quota_remaining(tenant: dict) -> int:
@@ -97,14 +105,19 @@ def incident_quota_remaining(tenant: dict) -> int:
     plan = get_tenant_plan(tenant)
     if plan.included_incidents == -1:
         return -1
-    used = tenant.get("incident_count", 0)
+    used = tenant.get("incident_count", tenant.get("incidents_this_month", 0))
     return max(plan.included_incidents - int(used), 0)
 
 
 def increment_incident_count(tenant: dict) -> dict:
-    """Increment the tenant's incident counter, persist, and return the updated record."""
+    """Increment the tenant's incident counter and return the updated record.
+
+    Caller is responsible for persisting via save_tenant() if needed.
+    """
     tenant = copy.deepcopy(tenant)
-    tenant["incident_count"] = tenant.get("incident_count", 0) + 1
+    # Support both field names for backwards compatibility
+    count = tenant.get("incident_count", tenant.get("incidents_this_month", 0))
+    tenant["incident_count"]      = count + 1
+    tenant["incidents_this_month"] = count + 1
     tenant["last_updated"] = time.time()
-    save_tenant(tenant)
     return tenant

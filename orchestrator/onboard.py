@@ -28,6 +28,7 @@ from tenants import (
     mark_phone_verified,
     find_tenant_by_phone,
 )
+from plans import get_tenant_plan, incident_quota_remaining
 
 logger = logging.getLogger("orchestrator.onboard")
 
@@ -39,12 +40,16 @@ TWILIO_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 # ── Request models ─────────────────────────────────────────────────────────────
 
 class OnboardRequest(BaseModel):
-    service_name:          str
-    health_url:            str
-    whatsapp_numbers:      list[str] = []
-    notification_channel:  str = "whatsapp"
-    telegram_bot_token:    Optional[str] = None
-    telegram_chat_id:      Optional[str] = None
+    service_name:           str
+    health_url:             str
+    whatsapp_numbers:       list[str] = []
+    notification_channel:   str = "whatsapp"
+    plan:                   str = "solo"
+    telegram_bot_token:     Optional[str] = None
+    telegram_chat_id:       Optional[str] = None
+    twilio_account_sid:     Optional[str] = None
+    twilio_auth_token:      Optional[str] = None
+    twilio_whatsapp_from:   Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -109,9 +114,13 @@ def onboard(req: OnboardRequest):
         service_name=req.service_name,
         health_url=req.health_url,
         whatsapp_numbers=numbers,
+        plan=req.plan,
         notification_channel=req.notification_channel,
         telegram_bot_token=req.telegram_bot_token,
         telegram_chat_id=req.telegram_chat_id,
+        twilio_account_sid=req.twilio_account_sid,
+        twilio_auth_token=req.twilio_auth_token,
+        twilio_whatsapp_from=req.twilio_whatsapp_from,
     )
 
     # Send WhatsApp verification codes (WhatsApp channel only)
@@ -132,9 +141,11 @@ def onboard(req: OnboardRequest):
         "service_name":          tenant["service_name"],
         "notification_channel":  req.notification_channel,
         "status":                tenant["status"],
+        "plan":                  req.plan,
         "contacts_pending":      len(numbers),
         "verification_sent":     sent,
         "verification_failed":   failed,
+        "notification_config":   "custom" if req.twilio_account_sid else "shared",
         "next_step":             "POST /verify with your phone and code" if req.notification_channel == "whatsapp" else "Tenant is active. Configure your bot and start monitoring.",
     }
 
@@ -215,6 +226,14 @@ async def test_incident(tenant_id: str):
             detail=f"Tenant not active (status={tenant.get('status')}). Verify all contacts first."
         )
 
+    plan  = get_tenant_plan(tenant)
+    quota = incident_quota_remaining(tenant)
+    if quota == 0:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Incident quota exhausted for {plan.name} plan. Upgrade to continue."
+        )
+
     # Inject a synthetic critical health payload
     synthetic_health = {
         "health_score": {
@@ -244,7 +263,7 @@ async def test_incident(tenant_id: str):
     import asyncio
 
     # Don't overwrite real incident
-    existing = get_active_incident()
+    existing = get_active_incident(tenant_id=tenant_id)
     if existing and existing.get("tenant_id") == tenant_id:
         raise HTTPException(status_code=409, detail="Active incident already exists for this tenant")
 

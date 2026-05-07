@@ -1,4 +1,4 @@
-# test_drive.py
+# smoke_test.py
 """
 Local smoke-test harness.
 
