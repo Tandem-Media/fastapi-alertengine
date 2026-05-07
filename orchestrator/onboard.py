@@ -281,7 +281,7 @@ async def test_incident(tenant_id: str):
     # Send to all verified numbers
     verified = get_verified_numbers(tenant_id)
     base_url = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
-    token    = generate_recovery_token(incident_id)
+    token    = generate_recovery_token(incident_id, tenant_id=tenant_id)
     url      = f"{base_url}/action/recover?token={token}"
 
     from notifications import send_validation
