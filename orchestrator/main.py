@@ -120,6 +120,7 @@ def dlq_entries(tenant_id: str):
     try:
         from tenants import get_tenant
         from plans import get_tenant_plan
+        from dlq import get_all
         tenant = get_tenant(tenant_id)
         if not tenant:
             raise HTTPException(status_code=404, detail="Tenant not found")
@@ -127,9 +128,8 @@ def dlq_entries(tenant_id: str):
         if not plan.has_dlq_access:
             raise HTTPException(
                 status_code=403,
-                detail=f"DLQ access not available on {tenant.get('plan', 'solo')} plan. Upgrade to startup or higher."
+                detail=f"DLQ access not available on {tenant.get('plan', 'solo')} plan. Upgrade to startup or higher.",
             )
-        from dlq import get_all
         return {"entries": get_all(limit=20)}
     except HTTPException:
         raise

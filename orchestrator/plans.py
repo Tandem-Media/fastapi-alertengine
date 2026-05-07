@@ -1,7 +1,19 @@
 # orchestrator/plans.py
+"""
+Plan definitions and tenant plan lookup.
+
+Plans (in ascending order):
+  solo       — free tier, 1 service, 50 incidents/month, no DLQ, no voice escalation
+  startup    — 5 services, 200 incidents/month, DLQ + voice escalation
+  teams      — 20 services, 1000 incidents/month, full feature set
+  enterprise — unlimited services and incidents, full feature set
+"""
+
+import copy
+import time
 from typing import Literal, Dict
-from pydantic import BaseModel, Field
-from datetime import datetime
+
+from pydantic import BaseModel
 
 
 PlanName = Literal["solo", "startup", "teams", "enterprise"]
@@ -9,8 +21,8 @@ PlanName = Literal["solo", "startup", "teams", "enterprise"]
 
 class TenantPlan(BaseModel):
     name: PlanName
-    max_services: int          # -1 = unlimited
-    included_incidents: int    # -1 = unlimited
+    max_services: int               # -1 = unlimited
+    included_incidents: int         # -1 = unlimited
     overage_fee_per_incident: float
     has_dlq_access: bool = False
     has_claude_decision: bool = True
@@ -76,31 +88,36 @@ def get_tenant_plan(tenant: dict) -> TenantPlan:
 
 
 def can_monitor_more_services(tenant: dict) -> bool:
-    """Returns True if tenant has not reached their service limit."""
+    """Return True if the tenant is allowed to monitor an additional service."""
     plan = get_tenant_plan(tenant)
     if plan.max_services == -1:
         return True
-    services = tenant.get("services_monitored", [])
-    return len(services) < plan.max_services
+    current = tenant.get("service_count", tenant.get("services_monitored", []))
+    count = len(current) if isinstance(current, list) else int(current)
+    return count < plan.max_services
 
 
 def incident_quota_remaining(tenant: dict) -> int:
-    """
-    Returns remaining incident quota for this billing cycle.
-    Returns -1 if unlimited.
+    """Return how many incidents remain in the tenant's monthly quota.
+
+    Returns -1 when the plan has unlimited incidents.
     """
     plan = get_tenant_plan(tenant)
     if plan.included_incidents == -1:
         return -1
-    used = tenant.get("incidents_this_month", 0)
-    return max(0, plan.included_incidents - used)
+    used = tenant.get("incident_count", tenant.get("incidents_this_month", 0))
+    return max(plan.included_incidents - int(used), 0)
 
 
 def increment_incident_count(tenant: dict) -> dict:
+    """Increment the tenant's incident counter and return the updated record.
+
+    Caller is responsible for persisting via save_tenant() if needed.
     """
-    Increment the tenant's monthly incident counter.
-    Returns updated tenant dict. Caller must persist.
-    """
-    tenant = {**tenant}
-    tenant["incidents_this_month"] = tenant.get("incidents_this_month", 0) + 1
+    tenant = copy.deepcopy(tenant)
+    # Support both field names for backwards compatibility
+    count = tenant.get("incident_count", tenant.get("incidents_this_month", 0))
+    tenant["incident_count"]      = count + 1
+    tenant["incidents_this_month"] = count + 1
+    tenant["last_updated"] = time.time()
     return tenant

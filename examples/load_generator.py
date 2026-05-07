@@ -10,7 +10,7 @@ import time
 
 import httpx
 
-BASE_URL    = "http://localhost:8000"
+BASE_URL    = BASE_URL = "http://localhost:8000"
 CONCURRENCY = 30       # increased from 15
 INTERVAL_S  = 0.1      # increased from 0.3
 ENDPOINT    = "/api/payments/process"
@@ -20,7 +20,7 @@ stats = {"ok": 0, "err": 0, "total": 0, "start": time.time()}
 
 async def hit(client: httpx.AsyncClient) -> None:
     try:
-        r = await client.get(f"{BASE_URL}{ENDPOINT}", timeout=10)
+        r = await client.get(f"{BASE_URL}{ENDPOINT}", timeout=15)
         body = r.json()
         stats["total"] += 1
         if body.get("status") == "success":

@@ -40,13 +40,16 @@ TWILIO_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 # ── Request models ─────────────────────────────────────────────────────────────
 
 class OnboardRequest(BaseModel):
-    service_name:      str
-    health_url:        str
-    whatsapp_numbers:  list[str]
-    plan:              str = "solo"
-    twilio_account_sid: Optional[str] = None
-    twilio_auth_token: Optional[str] = None
-    twilio_whatsapp_from: Optional[str] = None
+    service_name:           str
+    health_url:             str
+    whatsapp_numbers:       list[str] = []
+    notification_channel:   str = "whatsapp"
+    plan:                   str = "solo"
+    telegram_bot_token:     Optional[str] = None
+    telegram_chat_id:       Optional[str] = None
+    twilio_account_sid:     Optional[str] = None
+    twilio_auth_token:      Optional[str] = None
+    twilio_whatsapp_from:   Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -87,11 +90,18 @@ def onboard(req: OnboardRequest):
     Register a new tenant.
     Sends verification codes to all WhatsApp numbers.
     """
-    if not req.whatsapp_numbers:
+    if req.notification_channel == "whatsapp" and not req.whatsapp_numbers:
         raise HTTPException(status_code=400, detail="At least one WhatsApp number required")
 
     if not req.health_url.startswith("http"):
         raise HTTPException(status_code=400, detail="health_url must be a valid URL")
+
+    if req.notification_channel == "telegram":
+        if not req.telegram_bot_token or not req.telegram_chat_id:
+            raise HTTPException(
+                status_code=400,
+                detail="telegram_bot_token and telegram_chat_id are required for Telegram channel",
+            )
 
     # Normalise numbers to whatsapp: prefix
     numbers = []
@@ -105,33 +115,38 @@ def onboard(req: OnboardRequest):
         health_url=req.health_url,
         whatsapp_numbers=numbers,
         plan=req.plan,
+        notification_channel=req.notification_channel,
+        telegram_bot_token=req.telegram_bot_token,
+        telegram_chat_id=req.telegram_chat_id,
         twilio_account_sid=req.twilio_account_sid,
         twilio_auth_token=req.twilio_auth_token,
         twilio_whatsapp_from=req.twilio_whatsapp_from,
     )
 
-    # Send verification codes
+    # Send WhatsApp verification codes (WhatsApp channel only)
     sent    = []
     failed  = []
-    for number in numbers:
-        code = generate_verification_code(number)
-        ok   = _send_verification_whatsapp(number, code)
-        if ok:
-            sent.append(number)
-        else:
-            failed.append(number)
-            logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
+    if req.notification_channel == "whatsapp":
+        for number in numbers:
+            code = generate_verification_code(number)
+            ok   = _send_verification_whatsapp(number, code)
+            if ok:
+                sent.append(number)
+            else:
+                failed.append(number)
+                logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
 
     return {
-        "tenant_id":          tenant["tenant_id"],
-        "service_name":       tenant["service_name"],
-        "status":             "pending_verification",
-        "plan":               req.plan,
-        "contacts_pending":   len(numbers),
-        "verification_sent":  sent,
-        "verification_failed": failed,
-        "notification_config": "custom" if req.twilio_account_sid else "shared",
-        "next_step":          "POST /verify with your phone and code",
+        "tenant_id":             tenant["tenant_id"],
+        "service_name":          tenant["service_name"],
+        "notification_channel":  req.notification_channel,
+        "status":                tenant["status"],
+        "plan":                  req.plan,
+        "contacts_pending":      len(numbers),
+        "verification_sent":     sent,
+        "verification_failed":   failed,
+        "notification_config":   "custom" if req.twilio_account_sid else "shared",
+        "next_step":             "POST /verify with your phone and code" if req.notification_channel == "whatsapp" else "Tenant is active. Configure your bot and start monitoring.",
     }
 
 
