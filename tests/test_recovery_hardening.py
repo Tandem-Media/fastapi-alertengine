@@ -1,110 +1,112 @@
-import asyncio
+import ast
 import importlib
 import sys
-from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 
 ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1] / "orchestrator"
 
 
-@contextmanager
-def _orchestrator_path():
-    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+@pytest.fixture
+def orchestrator_path():
+    path = str(ORCHESTRATOR_DIR)
+    sys.path.insert(0, path)
     try:
         yield
     finally:
-        sys.path = [p for p in sys.path if p != str(ORCHESTRATOR_DIR)]
+        sys.path = [p for p in sys.path if p != path]
+        for module_name in ("main", "action_generator", "loop", "onboard"):
+            sys.modules.pop(module_name, None)
 
 
-def _import_orchestrator_module(name: str):
-    with _orchestrator_path():
-        with patch.dict(sys.modules, {"uvicorn": MagicMock()}):
-            module = importlib.import_module(name)
-    return module
+def test_action_recover_endpoint_is_mounted_and_blocks_replay(orchestrator_path, monkeypatch):
+    import action_generator
+    import main
+
+    consumed_tokens = set()
+    call_count = 0
+
+    def fake_validate_and_consume(token, expected_tenant_id=None):
+        nonlocal call_count
+        call_count += 1
+        assert expected_tenant_id is None
+        if token in consumed_tokens:
+            return False, None, "Token already used"
+        consumed_tokens.add(token)
+        return True, {
+            "incident_id": "inc-tenant-123-1",
+            "tenant_id": "tenant-123",
+            "action": "restart",
+        }, "ok"
+
+    monkeypatch.setattr(action_generator, "validate_and_consume", fake_validate_and_consume)
+
+    client = TestClient(main.health_app)
+    openapi = client.get("/openapi.json")
+    assert openapi.status_code == 200
+    assert "/action/recover" in openapi.json()["paths"]
+
+    first = client.get("/action/recover", params={"token": "signed-token"})
+    assert first.status_code == 200
+    assert first.json()["authorized"] is True
+    assert first.json()["incident_id"] == "inc-tenant-123-1"
+    assert first.json()["tenant_id"] == "tenant-123"
+    assert first.json()["action"] == "restart"
+
+    second = client.get("/action/recover", params={"token": "signed-token"})
+    assert second.status_code == 401
+    assert second.json()["detail"] == "Token already used"
+    assert call_count == 2
 
 
-def test_recover_action_success():
-    main = _import_orchestrator_module("main")
-    payload = {"incident_id": "inc-123", "tenant_id": "tenant-42", "action": "restart"}
+def test_generate_recovery_token_embeds_actual_tenant_id(orchestrator_path, monkeypatch):
+    monkeypatch.setenv("ALERT_SECRET", "test-secret-with-at-least-32-bytes")
+    import action_generator
+    import jwt
 
-    with _orchestrator_path():
-        with patch("action_generator.validate_and_consume", return_value=(True, payload, "ok")):
-            result = asyncio.run(main.recover_action("tok"))
-
-    assert result["authorized"] is True
-    assert result["incident_id"] == "inc-123"
-    assert result["tenant_id"] == "tenant-42"
-    assert result["action"] == "restart"
-    assert isinstance(result["authorized_at"], float)
-    assert result["message"] == "Recovery action authorized. System will execute fix."
-
-
-def test_recover_action_invalid_token():
-    main = _import_orchestrator_module("main")
-
-    with _orchestrator_path():
-        with patch("action_generator.validate_and_consume", return_value=(False, None, "bad token")):
-            with pytest.raises(HTTPException) as exc:
-                asyncio.run(main.recover_action("tok"))
-
-    assert exc.value.status_code == 401
-    assert exc.value.detail == "bad token"
-
-
-def test_onboard_test_incident_passes_tenant_id_to_token_generation():
-    onboard = _import_orchestrator_module("onboard")
-    tenant_id = "tenant-42"
-    generated_token = MagicMock(return_value="token-123")
-    fake_pipeline = SimpleNamespace(
-        open_incident=lambda incident_id, *_args: {"incident_id": incident_id},
-        decide_new_incident=lambda *_args: {"decision": "open"},
-        validate_decision_schema=lambda _decision: (True, "ok"),
+    token = action_generator.generate_recovery_token(
+        "inc-tenant-abc-1",
+        tenant_id="tenant-abc",
+        action="restart",
+        ttl=300,
     )
-    fake_memory = SimpleNamespace(
-        save_incident=lambda _incident: None,
-        get_active_incident=lambda tenant_id=None: None,
-    )
-    fake_notifications = SimpleNamespace(
-        fire=lambda _msg: None,
-        send_detection=lambda *_args: {"kind": "detection"},
-        send_validation=lambda *_args: {"kind": "validation"},
-    )
-    fake_action_generator = SimpleNamespace(generate_recovery_token=generated_token)
+    payload = jwt.decode(token, "test-secret-with-at-least-32-bytes", algorithms=["HS256"])
 
-    with (
-        patch.object(onboard, "get_tenant", return_value={"status": "active", "plan": "solo"}),
-        patch.object(onboard, "get_tenant_plan", return_value=SimpleNamespace(name="solo")),
-        patch.object(onboard, "incident_quota_remaining", return_value=1),
-        patch.object(onboard, "get_verified_numbers", return_value=["whatsapp:+15555550123"]),
-        patch.dict(
-            sys.modules,
-            {
-                "pipeline": fake_pipeline,
-                "memory": fake_memory,
-                "notifications": fake_notifications,
-                "action_generator": fake_action_generator,
-            },
-        ),
-    ):
-        result = asyncio.run(onboard.test_incident(tenant_id))
-
-    args, kwargs = generated_token.call_args
-    assert args
-    assert args[0].startswith(f"test-{tenant_id}-")
-    assert kwargs == {"tenant_id": tenant_id}
-    assert result["recovery_url"].endswith("token-123")
+    assert payload["incident_id"] == "inc-tenant-abc-1"
+    assert payload["tenant_id"] == "tenant-abc"
+    assert payload["tenant_id"] != "default"
+    assert payload["action"] == "restart"
 
 
-def test_env_example_documents_action_url_config():
-    env_example = (ORCHESTRATOR_DIR / ".env.example").read_text(encoding="utf-8")
+def test_all_orchestrator_recovery_token_call_sites_pass_tenant_id():
+    for rel_path in ("orchestrator/loop.py", "orchestrator/onboard.py"):
+        source = (Path(__file__).resolve().parents[1] / rel_path).read_text()
+        tree = ast.parse(source, filename=rel_path)
+        calls = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and getattr(node.func, "id", getattr(node.func, "attr", None)) == "generate_recovery_token"
+        ]
+        assert calls, f"expected at least one generate_recovery_token call in {rel_path}"
+        for call in calls:
+            keyword_names = {kw.arg for kw in call.keywords}
+            assert "tenant_id" in keyword_names, f"{rel_path} omits tenant_id when generating recovery token"
 
-    assert "ACTION_BASE_URL" in env_example
-    assert "primary base URL for recovery links" in env_example
-    assert "ALERTENGINE_BASE_URL" in env_example
-    assert "fallback base URL for recovery links" in env_example
+
+def test_recovery_url_base_prefers_action_base_url_with_alertengine_fallback(orchestrator_path, monkeypatch):
+    monkeypatch.setenv("ACTION_BASE_URL", "https://actions.example.test")
+    monkeypatch.setenv("ALERTENGINE_BASE_URL", "https://fallback.example.test")
+    import loop
+
+    assert loop.ACTION_BASE_URL == "https://actions.example.test"
+
+    sys.modules.pop("loop", None)
+    monkeypatch.delenv("ACTION_BASE_URL", raising=False)
+    loop = importlib.import_module("loop")
+    assert loop.ACTION_BASE_URL == "https://fallback.example.test"
+
+    onboard_source = (Path(__file__).resolve().parents[1] / "orchestrator/onboard.py").read_text()
+    assert 'os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))' in onboard_source

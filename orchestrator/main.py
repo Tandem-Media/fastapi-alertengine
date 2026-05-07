@@ -115,22 +115,6 @@ def delivery_log(incident_id: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@health_app.get("/action/recover")
-async def recover_action(token: str):
-    from action_generator import validate_and_consume
-    valid, payload, reason = validate_and_consume(token)
-    if not valid:
-        raise HTTPException(status_code=401, detail=reason)
-    return {
-        "authorized":    True,
-        "incident_id":   payload.get("incident_id"),
-        "tenant_id":     payload.get("tenant_id"),
-        "action":        payload.get("action"),
-        "authorized_at": time.time(),
-        "message":       "Recovery action authorized. System will execute fix.",
-    }
-
-
 @health_app.get("/dlq")
 def dlq_entries(tenant_id: str):
     try:
@@ -152,6 +136,33 @@ def dlq_entries(tenant_id: str):
     except Exception as e:
         logger.error("dlq_entries error: %s", e)
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@health_app.get("/action/recover")
+async def recover_action(token: str):
+    """
+    Human-authorized recovery endpoint.
+    Validates JWT token, enforces replay protection,
+    and returns authorization confirmation.
+    Called when engineer taps the recovery link in WhatsApp/Telegram.
+    """
+    try:
+        from action_generator import validate_and_consume
+        valid, payload, reason = validate_and_consume(token)
+        if not valid:
+            raise HTTPException(status_code=401, detail=reason)
+        return {
+            "authorized":    True,
+            "incident_id":   payload.get("incident_id"),
+            "tenant_id":     payload.get("tenant_id"),
+            "action":        payload.get("action"),
+            "authorized_at": time.time(),
+            "message":       "Recovery action authorized. System will execute fix.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _run_loop_safe():
