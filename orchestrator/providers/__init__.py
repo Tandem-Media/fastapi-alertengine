@@ -7,6 +7,7 @@ from .base import NotificationProvider, DeliveryResult
 from .whatsapp import WhatsAppProvider
 from .telegram import TelegramProvider
 from .webhook import WebhookProvider
+from .sent import SentProvider
 
 __all__ = [
     "NotificationProvider",
@@ -14,4 +15,5 @@ __all__ = [
     "WhatsAppProvider",
     "TelegramProvider",
     "WebhookProvider",
+    "SentProvider",
 ]

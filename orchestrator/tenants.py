@@ -46,6 +46,8 @@ def create_tenant(
     twilio_account_sid: Optional[str] = None,
     twilio_auth_token: Optional[str] = None,
     twilio_whatsapp_from: Optional[str] = None,
+    sent_api_key: Optional[str] = None,
+    sent_phone_id: Optional[str] = None,
 ) -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
@@ -69,6 +71,8 @@ def create_tenant(
         "twilio_account_sid":    twilio_account_sid,
         "twilio_auth_token":     twilio_auth_token,
         "twilio_whatsapp_from":  twilio_whatsapp_from,
+        "sent_api_key":          sent_api_key,
+        "sent_phone_id":         sent_phone_id,
         "incident_count":        0,
         "incidents_this_month":  0,
         "billing_cycle_start":   now,

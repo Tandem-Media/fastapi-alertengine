@@ -80,11 +80,22 @@ def status():
         from degraded import status as degraded_status
         from dlq import get_count as dlq_count
         from pipeline import STAGE_GATES
+        from circuit_breaker import is_open
+
+        def cb_status(provider: str) -> dict:
+            return {"open": is_open(provider)}
+
         return {
             "active_tenants": len(list_active_tenants()),
             "degraded_mode":  degraded_status(),
             "dlq_count":      dlq_count(),
             "stage_gates":    STAGE_GATES,
+            "circuit_breakers": {
+                "whatsapp": cb_status("whatsapp"),
+                "telegram": cb_status("telegram"),
+                "webhook":  cb_status("webhook"),
+                "sent":     cb_status("sent"),
+            },
         }
     except Exception as e:
         return {"error": str(e)}

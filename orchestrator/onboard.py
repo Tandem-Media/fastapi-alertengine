@@ -50,6 +50,8 @@ class OnboardRequest(BaseModel):
     twilio_account_sid:     Optional[str] = None
     twilio_auth_token:      Optional[str] = None
     twilio_whatsapp_from:   Optional[str] = None
+    sent_api_key:           Optional[str] = None
+    sent_phone_id:          Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -90,7 +92,7 @@ def onboard(req: OnboardRequest):
     Register a new tenant.
     Sends verification codes to all WhatsApp numbers.
     """
-    if req.notification_channel == "whatsapp" and not req.whatsapp_numbers:
+    if req.notification_channel in ("whatsapp", "sent") and not req.whatsapp_numbers:
         raise HTTPException(status_code=400, detail="At least one WhatsApp number required")
 
     if not req.health_url.startswith("http"):
@@ -121,12 +123,14 @@ def onboard(req: OnboardRequest):
         twilio_account_sid=req.twilio_account_sid,
         twilio_auth_token=req.twilio_auth_token,
         twilio_whatsapp_from=req.twilio_whatsapp_from,
+        sent_api_key=req.sent_api_key,
+        sent_phone_id=req.sent_phone_id,
     )
 
     # Send WhatsApp verification codes (WhatsApp channel only)
     sent    = []
     failed  = []
-    if req.notification_channel == "whatsapp":
+    if req.notification_channel in ("whatsapp", "sent"):
         for number in numbers:
             code = generate_verification_code(number)
             ok   = _send_verification_whatsapp(number, code)
@@ -145,8 +149,12 @@ def onboard(req: OnboardRequest):
         "contacts_pending":      len(numbers),
         "verification_sent":     sent,
         "verification_failed":   failed,
-        "notification_config":   "custom" if req.twilio_account_sid else "shared",
-        "next_step":             "POST /verify with your phone and code" if req.notification_channel == "whatsapp" else "Tenant is active. Configure your bot and start monitoring.",
+        "notification_config": (
+            "sent" if req.sent_api_key else
+            "custom_twilio" if req.twilio_account_sid else
+            "shared"
+        ),
+        "next_step":             "POST /verify with your phone and code" if req.notification_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
     }
 
 

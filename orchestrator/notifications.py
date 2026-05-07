@@ -259,13 +259,20 @@ async def dispatch(
     Falls back to webhook if primary fails.
     Never raises.
     """
-    from providers import WhatsAppProvider, TelegramProvider, WebhookProvider
+    from providers import (
+        SentProvider,
+        WhatsAppProvider,
+        TelegramProvider,
+        WebhookProvider,
+    )
     from delivery_ledger import record_from_result
 
     channel = tenant.get("notification_channel", "whatsapp")
 
     # Select primary provider
-    if channel == "telegram":
+    if channel == "sent":
+        primary = SentProvider()
+    elif channel == "telegram":
         primary = TelegramProvider()
     else:
         primary = WhatsAppProvider()
