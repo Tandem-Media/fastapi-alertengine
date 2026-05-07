@@ -95,7 +95,8 @@ def test_onboard_test_incident_passes_tenant_id_to_token_generation():
         result = asyncio.run(onboard.test_incident(tenant_id))
 
     args, kwargs = generated_token.call_args
-    assert args and args[0].startswith(f"test-{tenant_id}-")
+    assert args
+    assert args[0].startswith(f"test-{tenant_id}-")
     assert kwargs == {"tenant_id": tenant_id}
     assert result["recovery_url"].endswith("token-123")
 
