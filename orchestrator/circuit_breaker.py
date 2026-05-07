@@ -58,7 +58,15 @@ def is_open(provider: str, tenant_id: str = "global") -> bool:
         if time.time() < disabled_until:
             return True
 
-        # Cooldown expired — reset
+        # Cooldown expired — reset.
+        # Note: this is a non-atomic read-then-delete. Under concurrent workers,
+        # multiple workers may read the same expired disabled_until and all call
+        # r.delete(key) — that is safe because delete is idempotent. There is a
+        # brief window between the delete and the next record_failure where a
+        # fresh failure would start a new key, losing the old count. This is an
+        # accepted tradeoff for a circuit breaker: the alternative (a Lua script
+        # for atomic check-and-delete) adds complexity without meaningful gain,
+        # since the only consequence is a slightly delayed re-open after recovery.
         r.delete(key)
         logger.info(
             "CB reset (cooldown expired): provider=%s tenant=%s", provider, tenant_id
