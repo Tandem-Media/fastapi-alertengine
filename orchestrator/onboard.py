@@ -140,6 +140,13 @@ def onboard(req: OnboardRequest):
                 failed.append(number)
                 logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
 
+    if req.sent_api_key:
+        notification_config = "sent"
+    elif req.twilio_account_sid:
+        notification_config = "custom_twilio"
+    else:
+        notification_config = "shared"
+
     return {
         "tenant_id":             tenant["tenant_id"],
         "service_name":          tenant["service_name"],
@@ -149,11 +156,7 @@ def onboard(req: OnboardRequest):
         "contacts_pending":      len(numbers),
         "verification_sent":     sent,
         "verification_failed":   failed,
-        "notification_config": (
-            "sent" if req.sent_api_key else
-            "custom_twilio" if req.twilio_account_sid else
-            "shared"
-        ),
+        "notification_config":   notification_config,
         "next_step":             "POST /verify with your phone and code" if req.notification_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
     }
 
