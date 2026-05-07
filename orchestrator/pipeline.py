@@ -13,6 +13,7 @@ Rules:
 """
 
 import time
+import os
 import logging
 from typing import Optional
 
@@ -28,14 +29,14 @@ STAGES = [
     "RESOLVED",
 ]
 
-# Minimum seconds before each transition (demo-tunable)
+# Minimum seconds before each transition
 STAGE_GATES = {
-    "DETECTED":   0,    # immediate
-    "PROPOSED":   5,    # 5s after detected
-    "VALIDATED":  8,    # 8s after proposed
-    "AUTHORIZED": 0,    # immediate on tap
-    "EXECUTED":   0,    # immediate on authorized
-    "RESOLVED":   0,    # immediate on recovery
+    "DETECTED":   int(os.getenv("GATE_DETECTED_S", "0")),
+    "PROPOSED":   int(os.getenv("GATE_PROPOSED_S", "0")),
+    "VALIDATED":  int(os.getenv("GATE_VALIDATED_S", "0")),
+    "AUTHORIZED": int(os.getenv("GATE_AUTHORIZED_S", "0")),
+    "EXECUTED":   int(os.getenv("GATE_EXECUTED_S", "0")),
+    "RESOLVED":   int(os.getenv("GATE_RESOLVED_S", "0")),
 }
 
 ALLOWED_TRANSITIONS = {

@@ -35,7 +35,15 @@ def _redis():
 
 # ── Tenant CRUD ────────────────────────────────────────────────────────────────
 
-def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list, plan: str = "solo") -> dict:
+def create_tenant(
+    service_name: str,
+    health_url: str,
+    whatsapp_numbers: list,
+    plan: str = "solo",
+    twilio_account_sid: Optional[str] = None,
+    twilio_auth_token: Optional[str] = None,
+    twilio_whatsapp_from: Optional[str] = None,
+) -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
     now       = time.time()
@@ -49,6 +57,9 @@ def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list, pl
         "created_at":           now,
         "last_updated":         now,
         "plan":                 plan,
+        "twilio_account_sid":   twilio_account_sid,
+        "twilio_auth_token":    twilio_auth_token,
+        "twilio_whatsapp_from": twilio_whatsapp_from,
         "incidents_this_month": 0,
         "billing_cycle_start":  now,
         "services_monitored":   [],

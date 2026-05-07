@@ -13,6 +13,7 @@ Endpoints:
 import logging
 import os
 import time
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -43,6 +44,9 @@ class OnboardRequest(BaseModel):
     health_url:        str
     whatsapp_numbers:  list[str]
     plan:              str = "solo"
+    twilio_account_sid: Optional[str] = None
+    twilio_auth_token: Optional[str] = None
+    twilio_whatsapp_from: Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -101,6 +105,9 @@ def onboard(req: OnboardRequest):
         health_url=req.health_url,
         whatsapp_numbers=numbers,
         plan=req.plan,
+        twilio_account_sid=req.twilio_account_sid,
+        twilio_auth_token=req.twilio_auth_token,
+        twilio_whatsapp_from=req.twilio_whatsapp_from,
     )
 
     # Send verification codes
@@ -123,6 +130,7 @@ def onboard(req: OnboardRequest):
         "contacts_pending":   len(numbers),
         "verification_sent":  sent,
         "verification_failed": failed,
+        "notification_config": "custom" if req.twilio_account_sid else "shared",
         "next_step":          "POST /verify with your phone and code",
     }
 

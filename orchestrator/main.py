@@ -79,10 +79,12 @@ def status():
         from tenants import list_active_tenants
         from degraded import status as degraded_status
         from dlq import get_count as dlq_count
+        from pipeline import STAGE_GATES
         return {
             "active_tenants": len(list_active_tenants()),
             "degraded_mode":  degraded_status(),
             "dlq_count":      dlq_count(),
+            "stage_gates":    STAGE_GATES,
         }
     except Exception as e:
         return {"error": str(e)}

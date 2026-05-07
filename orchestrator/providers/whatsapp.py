@@ -28,17 +28,17 @@ class WhatsAppProvider(NotificationProvider):
             return self._make_result(tenant, incident_id, False,
                                      error="circuit_breaker_open")
 
-        from_ = os.getenv("TWILIO_WHATSAPP_FROM")
+        from_ = tenant.get("twilio_whatsapp_from") or os.getenv("TWILIO_WHATSAPP_FROM")
         to_   = os.getenv("TWILIO_WHATSAPP_TO")
+        sid   = tenant.get("twilio_account_sid") or os.getenv("TWILIO_ACCOUNT_SID")
+        token = tenant.get("twilio_auth_token") or os.getenv("TWILIO_AUTH_TOKEN")
 
-        if not from_ or not to_:
+        if not from_ or not to_ or not sid or not token:
             logger.warning("WhatsApp credentials not configured")
             return self._make_result(tenant, incident_id, False,
                                      error="credentials_missing")
         try:
             from twilio.rest import Client
-            sid   = os.getenv("TWILIO_ACCOUNT_SID")
-            token = os.getenv("TWILIO_AUTH_TOKEN")
             msg   = Client(sid, token).messages.create(
                 body=message, from_=from_, to=to_
             )
