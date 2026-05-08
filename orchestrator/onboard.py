@@ -300,6 +300,16 @@ async def test_incident(tenant_id: str):
     incident_record["tenant_id"] = tenant_id
     save_incident(incident_record)
 
+    from audit import append_event
+    append_event(
+        incident_id=incident_id,
+        stage="DETECTED",
+        decision="escalate",
+        reason="Test incident triggered via /test endpoint",
+        confidence=0.95,
+        tenant_id=tenant_id,
+    )
+
     # Send to all verified numbers
     verified = get_verified_numbers(tenant_id)
     base_url = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
@@ -307,7 +317,20 @@ async def test_incident(tenant_id: str):
     url      = f"{base_url}/action/recover?token={token}"
 
     from notifications import send_validation
-    fire(send_detection(incident_id, 20.0, 2500.0, 0.75))
+    import asyncio
+    from notifications import dispatch
+    asyncio.create_task(dispatch(
+        tenant=tenant,
+        incident_id=incident_id,
+        message=(
+            f"🚨 Test incident detected\n\n"
+            f"Score: 20/100\n"
+            f"P95: 2500ms\n"
+            f"Errors: 75%\n\n"
+            f"Incident: {incident_id}\n"
+            f"Recovery URL: {url}"
+        ),
+    ))
 
     return {
         "incident_id":     incident_id,

@@ -102,25 +102,57 @@ def status():
 
 
 @health_app.get("/audit/{incident_id}")
-def audit_log(incident_id: str):
+def audit_log(incident_id: str, tenant_id: str):
     try:
+        from tenants import get_tenant
         from audit import get_audit_log
-        return {"incident_id": incident_id, "log": get_audit_log(incident_id)}
+        tenant = get_tenant(tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=404,
+                                detail="Tenant not found")
+        log = get_audit_log(incident_id)
+        owned = (
+            any(e.get("tenant_id") == tenant_id for e in log)
+            or incident_id.startswith(f"inc-{tenant_id}")
+            or incident_id.startswith(f"test-{tenant_id}")
+        )
+        if log and not owned:
+            raise HTTPException(status_code=403,
+                                detail="Access denied to this incident")
+        return {"incident_id": incident_id, "log": log}
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500,
+                            detail="Internal server error")
 
 
 @health_app.get("/delivery/{incident_id}")
-def delivery_log(incident_id: str):
+def delivery_log(incident_id: str, tenant_id: str):
     try:
+        from tenants import get_tenant
         from delivery_ledger import get_delivery_log, all_failed
+        tenant = get_tenant(tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=404,
+                                detail="Tenant not found")
         log = get_delivery_log(incident_id)
+        owned = (
+            any(e.get("tenant_id") == tenant_id for e in log)
+            or incident_id.startswith(f"inc-{tenant_id}")
+            or incident_id.startswith(f"test-{tenant_id}")
+        )
+        if log and not owned:
+            raise HTTPException(status_code=403,
+                                detail="Access denied to this incident")
         return {
             "incident_id": incident_id,
             "attempts":    len(log),
             "all_failed":  all_failed(incident_id),
             "log":         log,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("delivery_log error: %s", e)
         raise HTTPException(status_code=500, detail="Internal server error")

@@ -347,7 +347,8 @@ async def _process_tenant(tenant: dict) -> None:
 
             append_event(incident_id=incident_id, stage="DETECTED",
                          decision=claude["action"], reason=decision["reason"],
-                         confidence=decision["confidence"])
+                         confidence=decision["confidence"],
+                         tenant_id=tenant.get("tenant_id"))
 
             await _execute_actions(decision["actions"], incident_record, health, tenant)
         return
@@ -383,7 +384,8 @@ async def _process_tenant(tenant: dict) -> None:
                 _clear_tenant_active(tenant_id)
                 append_event(incident_id=incident_id, stage="RECOVERED",
                              decision=claude["action"], reason=decision["reason"],
-                             confidence=decision["confidence"])
+                             confidence=decision["confidence"],
+                             tenant_id=tenant.get("tenant_id"))
                 await _execute_actions(decision["actions"], updated, health, tenant)
             return
 
@@ -404,7 +406,8 @@ async def _process_tenant(tenant: dict) -> None:
         append_event(incident_id=incident_id, stage=next_stage,
                      decision=claude["action"], reason=decision["reason"],
                      confidence=decision["confidence"],
-                     action_id=make_action_id(incident_id, next_stage, "TRANSITION"))
+                     action_id=make_action_id(incident_id, next_stage, "TRANSITION"),
+                     tenant_id=tenant.get("tenant_id"))
 
         # Escalations
         duration = now - incident.get("started_at", now)
