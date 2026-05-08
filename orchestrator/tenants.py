@@ -153,9 +153,16 @@ def save_contacts(tenant_id: str, contacts: list) -> bool:
 def list_active_tenants() -> list:
     """Return all tenants with status=active."""
     try:
-        r          = _redis()
+        r = _redis()
         tenant_ids = r.smembers(ACTIVE_SET_KEY)
-        tenants    = []
+        if not tenant_ids:
+            keys = r.keys(f"{TENANT_PREFIX}*")
+            tenant_ids = [
+                k.replace(TENANT_PREFIX, "")
+                for k in keys
+                if ":" not in k.replace(TENANT_PREFIX, "", 1)
+            ]
+        tenants = []
         for tenant_id in tenant_ids:
             data = r.get(f"{TENANT_PREFIX}{tenant_id}")
             if data:

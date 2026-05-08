@@ -24,6 +24,7 @@ _STATE = {
     "entered_at":      0.0,
     "redis_failures":  0,
     "notify_failures": 0,
+    "health_fetch_failures": 0,
     "last_reset":      time.time(),
 }
 
@@ -57,6 +58,14 @@ def record_redis_failure() -> None:
 def record_notify_failure() -> None:
     _STATE["notify_failures"] += 1
     _check_thresholds()
+
+
+def record_health_fetch_failure() -> None:
+    """Record a tenant health fetch failure.
+    Separate from Redis failures — does not affect degraded mode."""
+    _STATE["health_fetch_failures"] += 1
+    logger.warning("Health fetch failure #%d",
+                   _STATE["health_fetch_failures"])
 
 
 def record_success() -> None:
@@ -113,4 +122,5 @@ def status() -> dict:
         "entered_at":      _STATE["entered_at"],
         "redis_failures":  _STATE["redis_failures"],
         "notify_failures": _STATE["notify_failures"],
+        "health_fetch_failures": _STATE["health_fetch_failures"],
     }

@@ -39,7 +39,11 @@ health_app = FastAPI(title="AlertEngine Orchestrator")
 # Mount onboarding router
 from onboard import router as onboard_router
 from onboarding_api import router as onboarding_router
+# Standard onboarding: phone verification flow (production)
+# See orchestrator/onboard.py
 health_app.include_router(onboard_router)
+# Quick-start onboarding: immediate activation (dev/testing)
+# See orchestrator/onboarding_api.py
 health_app.include_router(onboarding_router)
 
 

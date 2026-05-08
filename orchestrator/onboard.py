@@ -1,13 +1,19 @@
 # orchestrator/onboard.py
 """
-Tenant onboarding API — FastAPI router.
+Standard onboarding flow with phone verification.
+
+Use this for production tenants who need WhatsApp/Telegram
+phone verification before activation.
 
 Endpoints:
-    POST /onboard                      Register new tenant
-    POST /verify                       Verify WhatsApp number
-    GET  /tenant/{tenant_id}           Get tenant status
-    GET  /tenant/{tenant_id}/contacts  Get contact verification status
-    POST /tenant/{tenant_id}/test      Trigger test incident
+    POST /onboard   — Register tenant, send verification codes
+    POST /verify    — Verify phone number, activate tenant
+    GET  /tenant/{id}          — Get tenant status
+    GET  /tenant/{id}/contacts — Get contact verification status
+    POST /tenant/{id}/test     — Trigger test incident
+
+For quick-start activation without phone verification,
+see onboarding_api.py.
 """
 
 import logging
