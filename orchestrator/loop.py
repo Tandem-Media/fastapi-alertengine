@@ -54,6 +54,7 @@ from degraded import (
     current_mode, can_mutate_state, can_escalate,
     can_send_notifications, record_redis_failure,
     record_notify_failure, record_success,
+    record_health_fetch_failure,
 )
 from tenants import list_active_tenants, get_verified_numbers, save_tenant
 from plans import (
@@ -83,7 +84,7 @@ async def _fetch_health(health_url: str) -> dict | None:
             logger.warning("Health fetch %s returned %d", health_url, r.status_code)
     except Exception as e:
         logger.error("Health fetch failed %s: %s", health_url, e)
-        record_redis_failure()
+        record_health_fetch_failure()
     return None
 
 

@@ -261,3 +261,26 @@ This is not a report. It is an operational control system.
 ## 📄 License
 
 MIT — free to use, modify, and deploy. No strings attached.
+
+## Orchestrator API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /health | Service health + Redis status |
+| GET | /status | Active tenants, degraded mode, DLQ count, stage gates |
+| POST | /onboard | Register a new tenant |
+| POST | /verify | Verify WhatsApp number |
+| GET | /tenant/{id} | Get tenant status |
+| GET | /tenant/{id}/contacts | Get contact verification status |
+| POST | /tenant/{id}/test | Trigger test incident |
+| GET | /audit/{incident_id} | Incident audit log (requires ?tenant_id=) |
+| GET | /delivery/{incident_id} | Delivery log (requires ?tenant_id=) |
+| GET | /dlq | Dead letter queue (requires ?tenant_id=, startup+ plan) |
+| GET | /action/recover | Human-authorized recovery endpoint |
+
+## Environment Variables
+
+Ensure these variable names are used — old names are invalid:
+- ALERT_SECRET (not ACTION_SECRET_KEY)
+- LOOP_INTERVAL_S (not ORCHESTRATOR_POLL_S)
+- POLICY_MIN_SCORE_TO_ALERT (not ORCHESTRATOR_MIN_SCORE)
