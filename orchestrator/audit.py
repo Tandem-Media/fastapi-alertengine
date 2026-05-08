@@ -37,6 +37,7 @@ def append_event(
     actor: str = "pipeline",
     action_id: Optional[str] = None,
     metadata: Optional[dict] = None,
+    tenant_id: Optional[str] = None,
 ) -> bool:
     """
     Append an immutable audit event for an incident.
@@ -51,6 +52,7 @@ def append_event(
         "actor":       actor,
         "reason":      reason,
         "confidence":  confidence,
+        "tenant_id":   tenant_id,
     }
     if action_id:
         entry["action_id"] = action_id
