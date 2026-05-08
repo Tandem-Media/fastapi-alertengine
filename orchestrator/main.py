@@ -123,6 +123,7 @@ def audit_log(incident_id: str, tenant_id: str):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("audit_log error: %s", e)
         raise HTTPException(status_code=500,
                             detail="Internal server error")
 
