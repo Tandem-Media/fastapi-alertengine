@@ -270,13 +270,21 @@ MIT — free to use, modify, and deploy. No strings attached.
 | GET | /status | Active tenants, degraded mode, DLQ count, stage gates |
 | POST | /onboard | Register a new tenant |
 | POST | /verify | Verify WhatsApp number |
-| GET | /tenant/{id} | Get tenant status |
+| POST | /onboarding/activate | Quick-start: activate tenant after test alert |
+| GET | /onboarding/status | Quick-start: get onboarding status |
+| POST | /onboarding/test-alert | Quick-start: send test alert |
+| POST | /onboarding/test-connection | Quick-start: verify health URL connection |
+| GET | /tenant/{id} | Get tenant status and configuration |
 | GET | /tenant/{id}/contacts | Get contact verification status |
 | POST | /tenant/{id}/test | Trigger test incident |
 | GET | /audit/{incident_id} | Incident audit log (requires ?tenant_id=) |
 | GET | /delivery/{incident_id} | Delivery log (requires ?tenant_id=) |
 | GET | /dlq | Dead letter queue (requires ?tenant_id=, startup+ plan) |
 | GET | /action/recover | Human-authorized recovery endpoint |
+
+> Endpoints prefixed /onboarding/ are quick-start development
+> flows. Use /onboard and /verify for production deployments
+> with phone verification.
 
 ## Environment Variables
 

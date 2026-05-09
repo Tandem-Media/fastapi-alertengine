@@ -192,7 +192,7 @@ async def recover_action(token: str):
     """
     Human-authorized recovery endpoint.
     Validates JWT token, enforces replay protection,
-    and returns authorization confirmation.
+    writes audit entry, and returns authorization confirmation.
     Called when engineer taps the recovery link in WhatsApp/Telegram.
     """
     try:
@@ -200,6 +200,20 @@ async def recover_action(token: str):
         valid, payload, reason = validate_and_consume(token)
         if not valid:
             raise HTTPException(status_code=401, detail=reason)
+        # Write audit entry for the authorization
+        try:
+            from audit import append_event
+            append_event(
+                incident_id=payload.get("incident_id", "unknown"),
+                stage="AUTHORIZED",
+                decision="recover",
+                reason="Engineer authorized recovery via secure link",
+                confidence=1.0,
+                actor="engineer",
+                tenant_id=payload.get("tenant_id"),
+            )
+        except Exception as audit_err:
+            logger.warning("Audit write failed on recovery: %s", audit_err)
         return {
             "authorized":    True,
             "incident_id":   payload.get("incident_id"),
