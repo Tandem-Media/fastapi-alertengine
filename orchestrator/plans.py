@@ -16,7 +16,7 @@ from typing import Literal, Dict
 from pydantic import BaseModel
 
 
-PlanName = Literal["solo", "startup", "teams", "enterprise"]
+PlanName = Literal["solo", "startup", "scale", "teams", "enterprise"]
 
 
 class TenantPlan(BaseModel):
@@ -29,6 +29,7 @@ class TenantPlan(BaseModel):
     has_claude_decision: bool = True
     has_voice_escalation: bool = False
     has_custom_thresholds: bool = False
+    has_slack: bool = False
 
 
 PLANS: Dict[str, TenantPlan] = {
@@ -43,6 +44,7 @@ PLANS: Dict[str, TenantPlan] = {
         has_claude_decision=True,
         has_voice_escalation=False,
         has_custom_thresholds=False,
+        has_slack=False,
     ),
     "startup": TenantPlan(
         name="startup",
@@ -54,6 +56,19 @@ PLANS: Dict[str, TenantPlan] = {
         has_claude_decision=True,
         has_voice_escalation=True,
         has_custom_thresholds=False,
+        has_slack=True,
+    ),
+    "scale": TenantPlan(
+        name="scale",
+        max_services=20,
+        included_incidents=1000,
+        overage_fee_per_incident=0.02,
+        default_provider="whatsapp",
+        has_dlq_access=True,
+        has_claude_decision=True,
+        has_voice_escalation=True,
+        has_custom_thresholds=True,
+        has_slack=True,
     ),
     "teams": TenantPlan(
         name="teams",
@@ -65,6 +80,7 @@ PLANS: Dict[str, TenantPlan] = {
         has_claude_decision=True,
         has_voice_escalation=True,
         has_custom_thresholds=True,
+        has_slack=True,
     ),
     "enterprise": TenantPlan(
         name="enterprise",
@@ -76,6 +92,7 @@ PLANS: Dict[str, TenantPlan] = {
         has_claude_decision=True,
         has_voice_escalation=True,
         has_custom_thresholds=True,
+        has_slack=True,
     ),
 }
 

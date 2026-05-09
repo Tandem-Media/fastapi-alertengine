@@ -58,6 +58,8 @@ class OnboardRequest(BaseModel):
     twilio_whatsapp_from:   Optional[str] = None
     sent_api_key:           Optional[str] = None
     sent_phone_id:          Optional[str] = None
+    slack_webhook_url:      Optional[str] = None
+    slack_channel:          Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -142,6 +144,8 @@ def onboard(req: OnboardRequest):
         twilio_whatsapp_from=req.twilio_whatsapp_from,
         sent_api_key=req.sent_api_key,
         sent_phone_id=req.sent_phone_id,
+        slack_webhook_url=req.slack_webhook_url,
+        slack_channel=req.slack_channel,
     )
 
     # Send WhatsApp verification codes (WhatsApp channel only)
@@ -174,6 +178,7 @@ def onboard(req: OnboardRequest):
         "verification_sent":     sent,
         "verification_failed":   failed,
         "notification_config":   notification_config,
+        "slack_configured":      bool(req.slack_webhook_url),
         "next_step":             "POST /verify with your phone and code" if effective_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
     }
 

@@ -99,6 +99,7 @@ def status():
                 "telegram": cb_status("telegram"),
                 "webhook":  cb_status("webhook"),
                 "sent":     cb_status("sent"),
+                "slack":    cb_status("slack"),
             },
         }
     except Exception as e:

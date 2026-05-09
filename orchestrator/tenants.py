@@ -48,6 +48,8 @@ def create_tenant(
     twilio_whatsapp_from: Optional[str] = None,
     sent_api_key: Optional[str] = None,
     sent_phone_id: Optional[str] = None,
+    slack_webhook_url: Optional[str] = None,
+    slack_channel: Optional[str] = None,
 ) -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
@@ -73,6 +75,8 @@ def create_tenant(
         "twilio_whatsapp_from":  twilio_whatsapp_from,
         "sent_api_key":          sent_api_key,
         "sent_phone_id":         sent_phone_id,
+        "slack_webhook_url":     slack_webhook_url,
+        "slack_channel":         slack_channel,
         "incident_count":        0,
         "incidents_this_month":  0,
         "billing_cycle_start":   now,
