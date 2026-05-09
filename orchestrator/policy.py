@@ -72,6 +72,17 @@ def is_suppressed_action(action: str) -> bool:
     return False
 
 
+def should_open_new_incident(tenant_incident: dict) -> bool:
+    """
+    Returns False if an active incident already exists for
+    this tenant. Extra guard against duplicate creation.
+    """
+    if tenant_incident is not None:
+        logger.debug("Policy: active incident exists — skipping new")
+        return False
+    return True
+
+
 def validate_decision(decision: dict) -> tuple[bool, str]:
     """
     Full policy check on a Claude decision.
