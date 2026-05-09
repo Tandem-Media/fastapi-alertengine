@@ -45,9 +45,14 @@ from notifications import (
 )
 from action_generator import generate_recovery_token
 from claude_engine import get_decision as claude_decide
-from policy import should_alert, should_escalate_voice, should_escalate_secondary
+from policy import (
+    should_alert,
+    should_escalate_voice,
+    should_escalate_secondary,
+    should_open_new_incident,
+)
 from lock import incident_lock, renew_lock
-from idempotency import execute_once, make_action_id
+from idempotency import execute_once, make_action_id, is_executed, mark_executed
 from audit import append_event
 from dlq import push as dlq_push
 from degraded import (
@@ -295,10 +300,27 @@ async def _process_tenant(tenant: dict) -> None:
         if not can_mutate_state():
             return
 
-        incident_id = f"inc-{tenant_id}-{int(now)}"
-        async with incident_lock(incident_id) as token:
+        creation_lock_key = f"creating-{tenant_id}"
+        async with incident_lock(creation_lock_key, ttl=10) as token:
             if not token:
                 return
+
+            incident = _get_tenant_incident(tenant_id)
+            if not should_open_new_incident(incident):
+                return
+
+            incident_id = f"inc-{tenant_id}-{int(now)}"
+            creation_key = make_action_id(
+                incident_id, "DETECTED", "OPEN_INCIDENT"
+            )
+            if is_executed(creation_key):
+                logger.info("Incident creation already executed: %s", incident_id)
+                return
+
+            mark_executed(creation_key, {
+                "tenant_id": tenant_id,
+                "incident_id": incident_id,
+            })
 
             if not should_alert(score, err):
                 return
@@ -323,8 +345,8 @@ async def _process_tenant(tenant: dict) -> None:
                                tenant_id, tenant.get("plan", "solo"))
                 return
 
-            if not renew_lock(incident_id, token):
-                logger.warning("Lock renewal failed for %s — skipping cycle", incident_id)
+            if not renew_lock(creation_lock_key, token):
+                logger.warning("Lock renewal failed for %s — skipping cycle", creation_lock_key)
                 return
 
             claude = await claude_decide(health, incident=None)

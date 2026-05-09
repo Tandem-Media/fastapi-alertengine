@@ -106,7 +106,7 @@ def is_locked(incident_id: str) -> bool:
 
 
 @asynccontextmanager
-async def incident_lock(incident_id: str):
+async def incident_lock(incident_id: str, ttl: int = LOCK_TTL_S):
     """
     Async context manager for incident locking.
 
@@ -116,7 +116,7 @@ async def incident_lock(incident_id: str):
                 return  # skip this cycle
             # safe to process
     """
-    token = acquire_lock(incident_id)
+    token = acquire_lock(incident_id, ttl=ttl)
     try:
         yield token
     finally:
