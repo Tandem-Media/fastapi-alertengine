@@ -305,8 +305,8 @@ async def _process_tenant(tenant: dict) -> None:
             if not token:
                 return
 
-            incident = _get_tenant_incident(tenant_id)
-            if not should_open_new_incident(incident):
+            existing_incident = _get_tenant_incident(tenant_id)
+            if not should_open_new_incident(existing_incident):
                 return
 
             incident_id = f"inc-{tenant_id}-{int(now)}"
