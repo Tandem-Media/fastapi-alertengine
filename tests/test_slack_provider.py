@@ -14,8 +14,7 @@ def orchestrator_path():
     path = str(ORCHESTRATOR_DIR)
     sys.path.insert(0, path)
     try:
-        if not asyncio.get_event_loop().is_closed():
-            pass
+        asyncio.get_running_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
     try:

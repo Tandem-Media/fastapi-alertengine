@@ -265,7 +265,7 @@ async def dispatch(
         WhatsAppProvider, TelegramProvider,
         WebhookProvider, SentProvider, SlackProvider,
     )
-    from delivery_ledger import record_from_result, all_failed
+    from delivery_ledger import record_from_result
 
     channel = tenant.get("notification_channel", "whatsapp")
 
