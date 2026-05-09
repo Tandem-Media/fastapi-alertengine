@@ -54,7 +54,7 @@ def _build_detection_blocks(
             "elements": [
                 {
                     "type": "mrkdwn",
-                    "text": "⏳ Analysing... Recovery link will be sent to the authorized engineer.",
+                    "text": "⏳ Analyzing... Recovery link will be sent to the authorized engineer.",
                 }
             ],
         },

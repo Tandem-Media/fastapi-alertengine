@@ -285,7 +285,7 @@ async def dispatch(
     if tenant.get("slack_webhook_url"):
         from plans import get_tenant_plan
         plan = get_tenant_plan(tenant)
-        if getattr(plan, "has_slack", True):
+        if getattr(plan, "has_slack", False):
             slack = SlackProvider()
             slack_result = await slack.send(
                 tenant, incident_id, message)
