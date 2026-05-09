@@ -8,6 +8,7 @@ from .whatsapp import WhatsAppProvider
 from .telegram import TelegramProvider
 from .webhook import WebhookProvider
 from .sent import SentProvider
+from .slack import SlackProvider
 
 __all__ = [
     "NotificationProvider",
@@ -16,4 +17,5 @@ __all__ = [
     "TelegramProvider",
     "WebhookProvider",
     "SentProvider",
+    "SlackProvider",
 ]

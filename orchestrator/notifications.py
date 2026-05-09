@@ -254,26 +254,26 @@ async def dispatch(
     message: str,
 ) -> bool:
     """
-    Route and deliver a notification via the tenant's configured channel.
+    Route and deliver notification via tenant's configured channel.
+    If tenant has slack_webhook_url configured, also send to Slack
+    as a secondary team-visibility channel.
     Records every attempt in the delivery ledger.
     Falls back to webhook if primary fails.
     Never raises.
     """
     from providers import (
-        SentProvider,
-        WhatsAppProvider,
-        TelegramProvider,
-        WebhookProvider,
+        WhatsAppProvider, TelegramProvider,
+        WebhookProvider, SentProvider, SlackProvider,
     )
-    from delivery_ledger import record_from_result
+    from delivery_ledger import record_from_result, all_failed
 
     channel = tenant.get("notification_channel", "whatsapp")
 
     # Select primary provider
-    if channel == "sent":
-        primary = SentProvider()
-    elif channel == "telegram":
+    if channel == "telegram":
         primary = TelegramProvider()
+    elif channel == "sent":
+        primary = SentProvider()
     else:
         primary = WhatsAppProvider()
 
@@ -281,23 +281,30 @@ async def dispatch(
     result = await primary.send(tenant, incident_id, message)
     record_from_result(result)
 
+    # Secondary: Slack team channel (if configured, plan permitting)
+    if tenant.get("slack_webhook_url"):
+        from plans import get_tenant_plan
+        plan = get_tenant_plan(tenant)
+        if getattr(plan, "has_slack", True):
+            slack = SlackProvider()
+            slack_result = await slack.send(
+                tenant, incident_id, message)
+            record_from_result(slack_result)
+
     if result.success:
         return True
 
     # Primary failed — attempt webhook fallback
-    logger.warning("Primary failed (%s) — trying webhook fallback", channel)
+    logger.warning("Primary failed (%s) — trying webhook fallback",
+                   channel)
     fallback        = WebhookProvider()
     fallback_result = await fallback.send(tenant, incident_id, message)
     record_from_result(fallback_result)
 
     if not fallback_result.success:
         logger.critical(
-            "ALL notifications failed for incident=%s tenant=%s — "
-            "primary=%s fallback=%s",
-            incident_id,
-            tenant.get("tenant_id"),
-            result.error,
-            fallback_result.error,
+            "ALL notifications failed for incident=%s tenant=%s",
+            incident_id, tenant.get("tenant_id"),
         )
 
     return fallback_result.success
