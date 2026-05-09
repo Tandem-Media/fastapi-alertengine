@@ -179,6 +179,7 @@ def onboard(req: OnboardRequest):
         "verification_failed":   failed,
         "notification_config":   notification_config,
         "slack_configured":      bool(req.slack_webhook_url),
+        "slack_available":       get_plan(req.plan).has_slack,
         "next_step":             "POST /verify with your phone and code" if effective_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
     }
 

@@ -81,6 +81,48 @@ def test_generate_recovery_token_embeds_actual_tenant_id(orchestrator_path, monk
     assert payload["action"] == "restart"
 
 
+def test_recover_action_writes_audit_entry(orchestrator_path, monkeypatch):
+    """Verify /action/recover writes an AUTHORIZED audit entry
+    on successful token consumption."""
+    import action_generator
+    import main
+
+    audit_calls = []
+
+    def fake_validate_and_consume(token, expected_tenant_id=None):
+        return True, {
+            "incident_id": "inc-test-001",
+            "tenant_id":   "tenant-test",
+            "action":      "restart",
+        }, "ok"
+
+    def fake_append_event(**kwargs):
+        audit_calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(action_generator,
+                        "validate_and_consume",
+                        fake_validate_and_consume)
+
+    # Patch audit.append_event inside main module scope
+    import audit
+    monkeypatch.setattr(audit, "append_event", fake_append_event)
+
+    from fastapi.testclient import TestClient
+    client = TestClient(main.health_app)
+
+    resp = client.get("/action/recover",
+                      params={"token": "valid-token"})
+    assert resp.status_code == 200
+    assert resp.json()["authorized"] is True
+
+    # Verify audit entry was written
+    assert len(audit_calls) == 1
+    assert audit_calls[0]["stage"] == "AUTHORIZED"
+    assert audit_calls[0]["tenant_id"] == "tenant-test"
+    assert audit_calls[0]["incident_id"] == "inc-test-001"
+
+
 def test_all_orchestrator_recovery_token_call_sites_pass_tenant_id():
     for rel_path in ("orchestrator/loop.py", "orchestrator/onboard.py"):
         source = (Path(__file__).resolve().parents[1] / rel_path).read_text()
