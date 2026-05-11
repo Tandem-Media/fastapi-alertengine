@@ -37,9 +37,7 @@ from memory import (
 )
 from notifications import (
     fire,
-    send_detection,
-    send_validation,
-    send_recovery,
+    dispatch as dispatch_notification,
     send_voice_escalation,
     send_secondary_escalation,
 )
@@ -208,12 +206,32 @@ async def _send_tenant_notification(
         return False
 
     if notification_type == "DETECTION":
-        return await send_detection(incident_id, score, p95, err)
+        message = (
+            f"🚨 API critical. Analysing...\n\n"
+            f"Score: {score:.0f}/100\n"
+            f"P95: {p95:.0f}ms\n"
+            f"Errors: {err*100:.0f}%\n\n"
+            f"Incident: {incident_id}"
+        )
     elif notification_type == "VALIDATION":
-        return await send_validation(incident_id, score, p95, recovery_url)
+        message = (
+            f"⚡ Restart recommended.\n\n"
+            f"Score: {score:.0f}/100\n"
+            f"P95: {p95:.0f}ms\n\n"
+            f"Tap to authorise:\n{recovery_url}"
+        )
     elif notification_type == "RECOVERY":
-        return await send_recovery(incident_id, score, duration_s)
-    return False
+        minutes = int(duration_s // 60)
+        seconds = int(duration_s % 60)
+        duration_str = f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
+        message = (
+            f"✅ Recovered. Score: {score:.0f}/100\n"
+            f"Duration: {duration_str}"
+        )
+    else:
+        return False
+
+    return await dispatch_notification(tenant, incident_id, message)
 
 
 # ── Action executor ────────────────────────────────────────────────────────────

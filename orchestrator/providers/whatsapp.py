@@ -48,7 +48,7 @@ class WhatsAppProvider(NotificationProvider):
         for raw_number in numbers:
             # Normalize number to whatsapp:+ format
             normalized = (raw_number if raw_number.startswith("whatsapp:")
-                          else f"whatsapp:{raw_number.lstrip('+')}")
+                          else f"whatsapp:+{raw_number.lstrip('+')}")
             try:
                 msg = client.messages.create(body=message, from_=from_, to=normalized)
                 record_success("whatsapp", tenant_id)
@@ -61,4 +61,3 @@ class WhatsAppProvider(NotificationProvider):
         ok = bool(successes)
         result = self._make_result(tenant, incident_id, ok, message_id=successes, error=(failures if failures else None))
         return result
-
