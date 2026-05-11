@@ -261,6 +261,12 @@ async def dispatch(
     Falls back to webhook if primary fails.
     Never raises.
     """
+    from tenants import get_verified_numbers
+    if not tenant.get("whatsapp_numbers"):
+        verified = get_verified_numbers(tenant.get("tenant_id", ""))
+        if verified:
+            tenant = {**tenant, "whatsapp_numbers": verified}
+
     from providers import (
         WhatsAppProvider, TelegramProvider,
         WebhookProvider, SentProvider, SlackProvider,
