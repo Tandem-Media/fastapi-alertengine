@@ -1934,11 +1934,6 @@ class TestOnboarding:
         out = capsys.readouterr().out
         assert "Alerts:" in out and "ACTIVE" in out
 
-    def test_banner_shows_actions_status(self, capsys):
-        self._instrument_redis()
-        out = capsys.readouterr().out
-        assert "Actions:" in out
-
     def test_banner_lists_health_endpoint(self, capsys):
         self._instrument_redis()
         out = capsys.readouterr().out
@@ -1963,27 +1958,6 @@ class TestOnboarding:
         self._instrument_redis()
         out = capsys.readouterr().out
         assert "Waiting for traffic" in out
-
-    def test_banner_actions_enabled_when_secret_and_router_mounted(self, capsys):
-        app = FastAPI()
-        from fastapi_alertengine import actions_router
-        app.include_router(actions_router)
-        with patch("fastapi_alertengine.redis_lib") as mock, \
-             patch.dict(os.environ, {"ACTION_SECRET_KEY": "test-secret"}):
-            mock.Redis.from_url.return_value = _make_redis()
-            instrument(app)
-        out = capsys.readouterr().out
-        assert "Actions: ENABLED" in out
-
-    def test_banner_actions_disabled_when_secret_missing(self, capsys):
-        app = FastAPI()
-        env = {k: v for k, v in os.environ.items() if k != "ACTION_SECRET_KEY"}
-        with patch("fastapi_alertengine.redis_lib") as mock, \
-             patch.dict(os.environ, env, clear=True):
-            mock.Redis.from_url.return_value = _make_redis()
-            instrument(app)
-        out = capsys.readouterr().out
-        assert "Actions: DISABLED" in out
 
     def test_banner_custom_health_path_appears(self, capsys):
         app = FastAPI()
@@ -2049,23 +2023,6 @@ class TestOnboarding:
         with TestClient(app) as client:
             data = client.get("/__alertengine/status").json()
         assert data["demo_mode"] is False
-
-    def test_status_endpoint_actions_enabled_false_without_router(self):
-        app, _ = self._instrument_redis()
-        with TestClient(app) as client:
-            data = client.get("/__alertengine/status").json()
-        assert data["actions_enabled"] is False
-
-    def test_status_endpoint_actions_enabled_true_with_router(self):
-        app = FastAPI()
-        from fastapi_alertengine import actions_router
-        app.include_router(actions_router)
-        with patch("fastapi_alertengine.redis_lib") as mock:
-            mock.Redis.from_url.return_value = _make_redis()
-            instrument(app)
-        with TestClient(app) as client:
-            data = client.get("/__alertengine/status").json()
-        assert data["actions_enabled"] is True
 
     def test_status_endpoint_not_in_openapi_schema(self):
         app, _ = self._instrument_redis()
@@ -2273,19 +2230,6 @@ class TestOnboarding:
         out = capsys.readouterr().out
         # Demo events are high-latency, so an alert should fire
         assert "ALERT DETECTED" in out
-
-    def test_demo_spike_prints_progressive_hint(self, capsys):
-        engine = AlertEngine(AlertConfig())
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("ENV", "ENVIRONMENT", "ALERTENGINE_DISABLE_DEMO")}
-
-        async def _run():
-            with patch.dict(os.environ, {**env, "ALERTENGINE_DEMO_DELAY": "0"}, clear=True):
-                await engine._run_demo_spike()
-
-        asyncio.run(_run())
-        out = capsys.readouterr().out
-        assert "actions_router" in out
 
     def test_demo_spike_alert_shown_only_once(self, capsys):
         engine = AlertEngine(AlertConfig())

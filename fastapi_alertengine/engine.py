@@ -54,8 +54,6 @@ from .intelligence import (
     enrich_alert,
 )
 from .actions.recovery import suggest_actions, ActionSuggestion
-from .actions.audit import log_action, read_audit_log
-from .actions.incident_replay import replay_incident
 from .storage import (
     flush_aggregates,
     read_aggregates,
@@ -347,7 +345,7 @@ class AlertEngine:
                 print(f"\n⚠️  ALERT DETECTED (Demo)\n"
                       f"  Service: {self.config.service_name}\n"
                       f"  Value:   {val:.0f}ms  Severity: {sev}")
-                print("\n💡 Tip: from fastapi_alertengine import actions_router")
+                print("\n💡 Tip: call engine.get_action_suggestions() to see text suggestions.")
         except asyncio.CancelledError:
             pass
 
@@ -859,16 +857,12 @@ class AlertEngine:
 
     def get_action_suggestions(
         self,
-        user_id:     str           = "system",
-        client_ip:   Optional[str] = None,
-        incident_id: Optional[str] = None,
     ) -> List[ActionSuggestion]:
         """
-        Evaluate current health and return ActionSuggestions.
-        NOTHING is auto-executed. Suggestions only.
+        Evaluate current health and return ActionSuggestions (text only).
+        NOTHING is auto-executed.
 
         Pipeline stage: detect → evaluate → suggest
-        The authorize → log stages happen in the actions router.
         """
         self._pipeline_stage = "evaluate"
         ev = self.evaluate()
@@ -882,46 +876,22 @@ class AlertEngine:
             service      = self.config.service_name,
             metrics      = ev.get("metrics", {}),
             alerts       = ev.get("alerts", []),
-            user_id      = user_id,
-            client_ip    = client_ip,
-            incident_id  = incident_id,
         )
         for s in suggestions:
             self._recent_suggestions.append(s)
         self._pipeline_stage = "detect"
         return suggestions
 
-    def replay_incident(self, trace_id: str, window_s: int = 300) -> dict:
-        """
-        Reconstruct the request lifecycle for an incident.
-        Read-only — no side effects.
-        """
-        if self._memory_mode:
-            return {
-                "trace_id": trace_id, "found": False,
-                "note": "Incident replay requires Redis mode.",
-                "incident_events": [], "stream_events": [],
-                "timeline": [], "summary": {},
-            }
-        return replay_incident(trace_id, self.redis, self.config, window_s=window_s)
-
-    def get_audit_log(self, last_n: int = 100, since_ts: float = 0.0) -> list:
-        """Return recent action audit entries for this service."""
-        if self._memory_mode:
-            return []
-        return read_audit_log(self.redis, self.config.service_name,
-                              last_n=last_n, since_ts=since_ts)
-
     def get_pipeline_status(self) -> dict:
         """
-        Return the current closed-loop pipeline status.
+        Return the current pipeline status.
         Informational only — shows where the engine is in the
-        detect → evaluate → suggest → authorize → log cycle.
+        detect → evaluate → suggest cycle.
         """
         return {
-            "pipeline":           "detect → evaluate → suggest → authorize → log",
+            "pipeline":           "detect → evaluate → suggest",
             "current_stage":      self._pipeline_stage,
-            "auto_execute":       False,   # always False in v1.6
+            "auto_execute":       False,
             "recent_suggestions": len(self._recent_suggestions),
             "last_suggestion":    (self._recent_suggestions[-1].as_dict()
                                    if self._recent_suggestions else None),
@@ -942,16 +912,10 @@ class AlertEngine:
                 self.redis = _NullRedis(); self._memory_mode = True
 
         mode_label = "memory" if self._memory_mode else "redis"
-        actions_key = bool(os.getenv("ACTION_SECRET_KEY"))
-        action_paths = {getattr(r, "path", "") for r in app.router.routes}
-        actions_mounted = "/action/confirm" in action_paths or "/action/restart" in action_paths
-
-        actions_enabled = actions_key and actions_mounted
         print(f"⚡ fastapi-alertengine v1.6.0 ({mode_label} mode)")
         print("─" * 50)
         print(f"  Metrics: ACTIVE")
         print(f"  Alerts: ACTIVE")
-        print(f"  Actions: {'ENABLED' if actions_enabled else 'DISABLED'}")
         print(f"  Baseline: {'ACTIVE' if self.config.baseline_preparation_mode else 'DISABLED'}")
         print(f"  Learning: {'ACTIVE' if self.config.baseline_learning_mode else 'DISABLED'}")
         print(f"  Health: ACTIVE (weights: lat={self.config.health_weight_latency} "
@@ -974,14 +938,6 @@ class AlertEngine:
 
         from .middleware import RequestMetricsMiddleware
         app.add_middleware(RequestMetricsMiddleware, alert_engine=self)
-
-        # v1.6: inject shared Redis into actions router for audit + replay protection
-        try:
-            from .actions.router import set_redis as _set_redis
-            if not self._memory_mode:
-                _set_redis(self.redis)
-        except Exception:
-            pass
         engine = self
 
         async def _start():
@@ -1020,14 +976,9 @@ class AlertEngine:
 
         @app.get("/__alertengine/status", include_in_schema=False)
         def _status():
-            ap = {getattr(r, "path", "") for r in app.router.routes}
-            act_mounted = "/action/confirm" in ap or "/action/restart" in ap
             return {
                 "version":              "1.6.0",
                 "mode":                 "memory" if engine._memory_mode else "redis",
-                "metrics_active":       True,
-                "alerts_active":        True,
-                "actions_enabled":      "/action/confirm" in {getattr(r, "path", "") for r in app.router.routes},
                 "metrics_active":       True,
                 "alerts_active":        True,
                 "ingestion":            engine.get_ingestion_stats(),
@@ -1040,27 +991,14 @@ class AlertEngine:
             }
 
         @app.get("/actions/suggest", include_in_schema=False)
-        def _suggest(user_id: str = "system", client_ip: Optional[str] = None,
-                     incident_id: Optional[str] = None):
-            suggestions = engine.get_action_suggestions(
-                user_id=user_id, client_ip=client_ip, incident_id=incident_id)
+        def _suggest():
+            suggestions = engine.get_action_suggestions()
             return {
                 "suggestions": [s.as_dict() for s in suggestions],
                 "count":       len(suggestions),
                 "auto_execute": False,
-                "pipeline":    "detect → evaluate → suggest → [authorize] → [log]",
+                "pipeline":    "detect → evaluate → suggest",
             }
-
-        @app.get("/actions/audit", include_in_schema=False)
-        def _audit(last_n: int = 100, since_ts: float = 0.0):
-            return {
-                "entries": engine.get_audit_log(last_n=last_n, since_ts=since_ts),
-                "service": engine.config.service_name,
-            }
-
-        @app.get("/incidents/replay", include_in_schema=False)
-        def _replay(trace_id: str, window_s: int = 300):
-            return engine.replay_incident(trace_id=trace_id, window_s=window_s)
 
         @app.get("/pipeline/status", include_in_schema=False)
         def _pipeline():

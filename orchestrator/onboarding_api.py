@@ -1,12 +1,15 @@
 # orchestrator/onboarding_api.py
 """
-Onboarding API routes.
+Quick-start onboarding flow for development and testing.
 
-Endpoints:
-    POST /onboarding/test-connection  Test health URL reachability
-    POST /onboarding/test-alert       Send WhatsApp test message
-    POST /onboarding/activate         Register tenant in Redis
-    GET  /onboarding/status           Current onboarding config
+Activates tenant immediately after a successful test alert,
+without requiring phone verification.
+
+Use this for: local development, CI testing, demo environments.
+NOT recommended for production multi-tenant deployments.
+
+For production onboarding with phone verification,
+see onboard.py.
 """
 
 import logging

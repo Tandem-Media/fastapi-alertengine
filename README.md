@@ -1,52 +1,34 @@
 # ⚡ fastapi-alertengine
 
-**Fix your API in production in under 30 seconds — from your phone.**
+**Your API broke. A customer told you. That's the problem we solve.**
 
-When a critical endpoint starts failing, dashboards don't help.  
-You need to **know immediately — and act.**
+Human-authorized incident recovery for FastAPI — via WhatsApp or Telegram.
 
----
-
-🔥 259/259 tests passing  
-🏦 Built from real financial infrastructure (AnchorFlow / Tofamba)  
-🤖 AI-agent ready (Claude / Copilot / Cursor)  
-⚡ Runs with or without Redis (memory mode)
+[![PyPI](https://img.shields.io/pypi/v/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
+[![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://github.com/Tandem-Media/fastapi-alertengine/actions/workflows/ci.yml/badge.svg)](https://github.com/Tandem-Media/fastapi-alertengine/actions)
 
 ---
 
-## 📱 See It In Action
+## What Is This?
 
-**Healthy → Failure → Alert on your phone → Tap → Recovered**
+**fastapi-alertengine** is two things:
 
-<p align="center">
-  <img src="docs/demo_alert.png" width="340" alt="Critical WhatsApp alert — health score 54/100, P95 1311ms, error rate 25%, Confirm Restart button">
-  &nbsp;&nbsp;
-  <img src="docs/demo_recovery.png" width="340" alt="After tapping Confirm — Restart authorised, recovery in progress">
-</p>
+### 1. Free PyPI Package — `pip install fastapi-alertengine`
+Drop-in P95 latency monitoring and error rate detection for FastAPI.
+One line of code. No Prometheus. No Grafana. No dashboards.
 
-> Built on a live payment processing system. Alert fires within 60 seconds of degradation. Recovery is one tap.
+### 2. Paid Orchestrator — Managed Incident Recovery
+An AI-powered orchestration layer that watches your health endpoint,
+diagnoses incidents in plain English, and sends you a WhatsApp or
+Telegram message with a one-tap recovery link.
 
----
-
-## 🧠 Why This Exists
-
-AlertEngine was built for systems under real pressure — not dashboards.
-
-While building **AnchorFlow**, a payment orchestration platform on mobile money rails in Zimbabwe, I needed monitoring that:
-
-- Never crashes the request path
-- Doesn't depend on external SaaS
-- Doesn't just report — but **guides recovery**
-
-So instead of paying $400/month for slow tooling, I built an **embedded stability circuit**.
-
-**Goal:** Reduce MTTR from minutes of panic → seconds of controlled action.
-
-The system enters the **Central Bank of Zimbabwe regulatory sandbox in May 2026** — where zero-failure assumptions get tested against real conditions.
+**AI detects. You authorize. Nothing runs without your approval.**
 
 ---
 
-## 🚀 Quickstart (2 minutes)
+## Quick Start — Free Package (30 seconds)
 
 ```bash
 pip install fastapi-alertengine
@@ -57,207 +39,222 @@ from fastapi import FastAPI
 from fastapi_alertengine import instrument
 
 app = FastAPI()
-engine = instrument(app)
+instrument(app)  # that's it
 ```
 
-Done. You now have a live observability + recovery pipeline.
+Your app now exposes:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /health/alerts` | Current health status |
+| `GET /metrics/history` | Per-minute aggregated metrics |
+| `GET /metrics/ingestion` | Ingestion counters |
+| `GET /__alertengine/status` | Full engine status |
 
 ---
 
-## 🔌 What You Get (Instantly)
-
-| Endpoint | Purpose |
-|---|---|
-| `GET /health/alerts` | P95 latency, error rate, health score |
-| `GET /incidents/timeline` | Append-only incident log (Redis ZSET) |
-| `GET /incidents/replay` | Full trace reconstruction |
-| `GET /actions/suggest` | Recovery actions (JWT signed) |
-| `GET /actions/audit` | Audit log of every action attempt |
-| `GET /intelligence/health` | Health breakdown + trend direction |
-| `GET /pipeline/status` | detect → evaluate → suggest → authorize → log |
-
----
-
-## 🏦 The $0 SaaS Tax Strategy
-
-| Feature | Datadog / Sentry | Prometheus / Grafana | ⚡ AlertEngine |
-|---|---|---|---|
-| Setup | ~30 mins + config | Days (infra + YAML) | < 2 mins (middleware) |
-| Cost | $50–$500/month | Infra + maintenance | $0 (self-hosted) |
-| Primary Output | Dashboards & alerts | Raw metrics & graphs | Actionable decisions |
-| Architecture | External (SaaS) | Sidecar / distributed | Embedded (in-process) |
-| Actionability | ❌ Observe only | ❌ Interpret yourself | ✅ Suggests next action |
-
----
-
-## 📊 Example Output
+## What You Get
 
 ```json
 {
   "status": "critical",
-  "health_score": {
-    "score": 54.0,
-    "trend": "degrading"
-  },
+  "health_score": {"score": 23, "status": "critical", "trend": "degrading"},
   "metrics": {
-    "overall_p95_ms": 1311.0,
-    "error_rate": 0.25
+    "overall_p95_ms": 2847.3,
+    "error_rate": 0.19,
+    "anomaly_score": 1.4,
+    "sample_size": 187
   },
   "alerts": [
     {
-      "type": "error_anomaly",
+      "type": "latency_spike",
       "severity": "critical",
-      "triggered_by": "absolute_threshold",
-      "reason_for_trigger": "Error rate 25% exceeds threshold (5%) by 400%"
+      "reason_for_trigger": "P95 latency 2847ms exceeds threshold 3000ms",
+      "triggered_by": "absolute_threshold"
     }
   ]
 }
 ```
 
-✔ No optional fields. ✔ Stable schema. ✔ Safe for automation and AI agents.
+---
+
+## How It Works
+FastAPI Request
+↓
+RequestMetricsMiddleware  ← measures latency + status
+↓
+Redis Streams             ← append-only event log
+↓
+Alert Engine              ← P95 + error rate + anomaly scoring
+↓
+/health/alerts            ← single status: ok | warning | critical
 
 ---
 
-## 🧩 Core Capabilities
+## Features — Free Package
 
-### 1. Smart Detection
-- Tracks P95 latency per route template (`/users/{id}` not `/users/123`)
-- Learns baseline traffic automatically
-- Detects rate-of-change spikes before absolute thresholds are crossed
+- **P95 latency tracking** — not averages, real percentiles
+- **Error rate detection** — 4xx/5xx with configurable thresholds
+- **Anomaly scoring** — detects spikes vs your baseline
+- **Adaptive thresholds** — learns your normal traffic pattern
+- **Rate-of-change detection** — catches sudden spikes below thresholds
+- **Health score 0-100** — composite score with trend analysis
+- **Action suggestions** — maps health to notify, alert, restart
+- **Incident replay** — reconstruct state from append-only audit log
+- **Circuit breaker** — buffers events during Redis outages
+- **Memory mode** — never crashes your app when Redis is unavailable
+- **AI-agent friendly** — clean API, works with Claude/Copilot/Cursor
 
-### 2. Health Scoring
-- Composite 0–100 score with weighted components
-- Trend direction: `improving` / `stable` / `degrading`
-- Rolling analysis via linear regression
+---
 
-### 3. Incident Intelligence
-- Redis-backed append-only timeline (ZSET)
-- Full incident replay via trace ID
-- Baseline comparisons and deviation percentages in every alert
+## Orchestrator — Managed Incident Recovery
 
-### 4. Recovery Suggestions
-- Ranked by priority: CRITICAL / HIGH / MEDIUM
-- JWT-signed tokens with optional IP binding
-- Never auto-executes — human or agent must confirm
+The orchestrator is the paid layer on top of the free package.
+It polls your health endpoint, runs AI diagnosis via Claude,
+and delivers human-authorized recovery via WhatsApp or Telegram.
 
-```json
-{
-  "action":         "restart",
-  "priority":       "CRITICAL",
-  "token":          "eyJ...",
-  "auto_permitted": false,
-  "triggered_by":   "health_score < 66"
-}
+### How an incident works
+
+Your P95 spikes or error rate climbs
+Orchestrator detects it within 5 seconds
+Claude diagnoses root cause in plain English
+You receive WhatsApp/Telegram: what broke, why, suggested fix
+Secure recovery link included (JWT-signed, expires in 5 minutes)
+You tap Approve
+Fix executes (restart, scale, clear cache)
+You receive confirmation when system recovers
+
+
+Nothing executes without your explicit approval.
+
+### Notification Channels
+
+| Channel | Provider | Plan | Best for |
+|---------|----------|------|----------|
+| WhatsApp | Sent.dm | Solo (default) | Zero-friction, instant setup |
+| WhatsApp | Twilio | All | Enterprise existing accounts |
+| Telegram | Telegram Bot API | All | Developers, North America |
+| Slack | Incoming Webhooks | Startup+ | Team transparency |
+| Webhook | HTTP POST | All | Slack/Teams/PagerDuty fallback |
+
+### Pricing
+
+| Tier | Price | Services | Incidents/mo | Slack | Voice |
+|------|-------|----------|--------------|-------|-------|
+| Solo | $399 | 1 | 50 | ❌ | ❌ |
+| Startup | $799 | 5 | 200 | ✅ | ✅ |
+| Scale | $1,500 | 20 | 1,000 | ✅ | ✅ |
+| Enterprise | Custom | Unlimited | Unlimited | ✅ | ✅ |
+
+### Orchestrator API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /health | Service health + Redis status |
+| GET | /status | Active tenants, degraded mode, DLQ, stage gates |
+| POST | /onboard | Register a new tenant |
+| POST | /verify | Verify WhatsApp number |
+| GET | /tenant/{id} | Get tenant status |
+| GET | /tenant/{id}/contacts | Get contact verification status |
+| POST | /tenant/{id}/test | Trigger test incident |
+| GET | /audit/{incident_id} | Incident audit log (requires ?tenant_id=) |
+| GET | /delivery/{incident_id} | Delivery log (requires ?tenant_id=) |
+| GET | /dlq | Dead letter queue (Startup+ plan required) |
+| GET | /action/recover | Human-authorized recovery endpoint |
+| POST | /onboarding/activate | Quick-start: activate after test alert |
+| GET | /onboarding/status | Quick-start: onboarding status |
+| POST | /onboarding/test-alert | Quick-start: send test alert |
+| POST | /onboarding/test-connection | Quick-start: verify health URL |
+
+> `/onboarding/*` endpoints are quick-start flows for dev/testing.
+> Use `/onboard` + `/verify` for production phone-verified deployments.
+
+---
+
+## Reliability Guarantees
+
+- **Duplicate incident prevention** — tenant-scoped lock + idempotency
+- **Replay protection** — JWT tokens single-use, atomic Redis SET NX
+- **Distributed locking** — Lua script atomic release, no race conditions
+- **Tenant isolation** — cross-tenant data access returns 403
+- **Audit trail** — every stage transition and recovery authorization logged
+- **Degraded mode** — NORMAL / DEGRADED / EMERGENCY with auto-recovery
+- **Dead letter queue** — unrecoverable failures captured for replay
+- **Circuit breaker** — per-provider per-tenant, Redis-backed
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| REDIS_URL | Yes | Redis connection URL |
+| ALERTENGINE_BASE_URL | Yes | Public URL of this orchestrator |
+| ANTHROPIC_API_KEY | Yes | Claude AI API key |
+| ALERT_SECRET | Yes | JWT signing secret |
+| TWILIO_ACCOUNT_SID | Twilio only | Twilio account SID |
+| TWILIO_AUTH_TOKEN | Twilio only | Twilio auth token |
+| TWILIO_WHATSAPP_FROM | Twilio only | Sender WhatsApp number |
+| SENT_API_KEY | Sent.dm only | Sent.dm API key |
+| SENT_PHONE_ID | Sent.dm only | Sent.dm phone ID |
+| LOOP_INTERVAL_S | No | Polling interval seconds (default: 5) |
+| POLICY_MIN_SCORE_TO_ALERT | No | Min score to open incident (default: 70) |
+
+---
+
+## Repository Structure
+fastapi_alertengine/     ← Free PyPI package
+middleware.py          ← RequestMetricsMiddleware
+engine.py             ← Core alert engine
+intelligence.py       ← Adaptive thresholds, health scoring
+actions/              ← Recovery suggestions and JWT tokens
+storage.py            ← Redis Streams persistence
+orchestrator/           ← Paid managed service
+loop.py              ← Multi-tenant polling
+pipeline.py          ← Incident state machine
+claude_engine.py     ← AI diagnosis
+notifications.py     ← Multi-channel dispatch
+providers/           ← WhatsApp, Telegram, Slack, Sent.dm, Webhook
+audit.py             ← Immutable forensic log
+plans.py             ← Billing tiers and feature gates
+examples/               ← Demo scripts
+docs/                   ← Agent integration guide
+tests/                  ← 220+ tests, Python 3.10/3.11/3.12
+
+---
+
+## Adversarial Audit
+
+This system was audited by an autonomous AI agent (Manus AI) acting
+as a hostile tenant attempting to break isolation, bypass human
+authorization, and overwhelm the system with concurrent requests.
+
+**Result: 10/10 live checklist checks passed.**
+
+- Cross-tenant isolation: blocked (403 returned)
+- Replay attack (20 concurrent): exactly 1 succeeded, 19 rejected
+- Natural incident detection: confirmed working
+- Recovery authorization audit trail: confirmed
+- DLQ plan enforcement: confirmed
+
+---
+
+## Get Started
+
+**Free package:**
+```bash
+pip install fastapi-alertengine
 ```
 
----
+**Managed orchestrator (Solo — $399):**
+Contact: anchorflow@outlook.com
 
-## 🔐 Recovery Pipeline
-
-```
-detect → evaluate → suggest → authorize → log
-```
-
-- Tokens signed with `ACTION_SECRET_KEY` (HS256)
-- Optional IP binding
-- JTI replay protection via Redis
-- Human or agent must explicitly authorize — nothing fires automatically
+**Upwork:**
+<a href="https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104">Human-authorized incident recovery for FastAPI</a>
 
 ---
 
-## ⚙️ Configuration
+## License
 
-| Variable | Default | Description |
-|---|---|---|
-| `ALERTENGINE_REDIS_URL` | `redis://localhost:6379` | Redis connection string |
-| `ALERTENGINE_P95_WARNING_MS` | `1000` | P95 warning threshold (ms) |
-| `ALERTENGINE_P95_CRITICAL_MS` | `3000` | P95 critical threshold (ms) |
-| `ALERTENGINE_BASELINE_LEARNING_MODE` | `false` | Enable adaptive threshold learning |
-| `ALERTENGINE_HEALTH_CRITICAL_THRESHOLD` | `40` | Health score below which status = critical |
-| `ACTION_SECRET_KEY` | *(unset)* | Required to enable action tokens |
-
----
-
-## 🤖 AI-Agent Ready
-
-Stable schema — no nulls, no variation. Directly consumable by agents.
-
-```python
-if health["health_score"]["score"] < 40:
-    suggestions = await client.get(f"{base_url}/actions/suggest")
-    for action in suggestions.json()["suggestions"]:
-        if action["priority"] == "CRITICAL" and action["token"]:
-            await client.get(
-                f"{base_url}/action/restart",
-                params={"token": action["token"]}
-            )
-```
-
-| Field | Description |
-|---|---|
-| `health_score.score` | 0–100 composite score. Below 40 = critical. |
-| `health_score.trend` | `"improving"` / `"stable"` / `"degrading"` |
-| `alerts[].triggered_by` | `"absolute_threshold"` / `"adaptive_threshold"` / `"rate_of_change"` |
-| `alerts[].reason_for_trigger` | Human-readable — safe to pass directly to an LLM |
-| `suggestions[].token` | Signed JWT — pass directly to `/action/restart` |
-
-Works with Claude Code, GitHub Copilot, and Cursor.
-
----
-
-## 🧠 Philosophy
-
-Most tools answer: **"What happened?"**
-
-AlertEngine answers: **"What should I do right now?"**
-
----
-
-## ✅ Reliability
-
-- 259/259 tests passing (pytest + httpx + fakeredis — Python 3.10, 3.11, 3.12)
-- Circuit breaker: CLOSED → OPEN → HALF_OPEN → CLOSED. Redis failures never affect the request path.
-- Memory mode: runs without Redis — useful for local development and CI.
-- Bounded fallback buffer: 500 events held in memory during outages, drained on recovery.
-- JTI replay protection: No action token can fire twice.
-
----
-
-## 🛡️ Stability Audits & Active Recovery
-
-AlertEngine is the engine behind a production observability service for teams that cannot afford downtime but do not have a full SRE function.
-
-| Tier | What You Get | Price |
-|---|---|---|
-| **24h Forensic Audit** | Full P95 & error analysis. Identifying revenue leaks your current monitoring misses. | `$1,500` |
-| **Revenue Protection Engine** | Proprietary AlertEngine install. P95 monitoring on revenue-critical endpoints. | `$4,500` |
-| **Active Recovery Shield** | AlertEngine + WhatsApp Command Center. CEO-level mobile control with 5-second authorized recovery. Your kill switch. | `$9,500` |
-
-This is not a report. It is an operational control system.
-
-→ **[View on Upwork](https://www.upwork.com/freelancers/~01f56dcb08577b4472?viewMode=1)**  
-→ **[anchorflow@outlook.com](mailto:anchorflow@outlook.com)** for direct consulting
-
----
-
-## 🗺️ Roadmap
-
-| Feature | Status |
-|---|---|
-| WhatsApp incident alerts (Twilio) — detect → notify → confirm → restart | 🔄 In progress |
-| Hosted alert engine (SaaS mode) | 📋 Planned |
-| Multi-service correlation | 📋 Planned |
-| Grafana dashboard JSON provisioning | 📋 Planned |
-
----
-
-## 📬 Contact
-
-**📧 [anchorflow@outlook.com](mailto:anchorflow@outlook.com)**  
-**🐙 [github.com/Tandem-Media/fastapi-alertengine](https://github.com/Tandem-Media/fastapi-alertengine)**
-
----
-
-## 📄 License
-
-MIT — free to use, modify, and deploy. No strings attached.
+MIT — free package only.
+The orchestrator is a commercial service.

@@ -46,6 +46,17 @@ def should_escalate_secondary(duration_s: float, score: float) -> bool:
     return duration_s >= SECONDARY_AFTER_S and score < MIN_SCORE_TO_ALERT
 
 
+def should_open_new_incident(tenant_incident: dict) -> bool:
+    """
+    Returns False if an active incident already exists for
+    this tenant. Extra guard against duplicate creation.
+    """
+    if tenant_incident is not None:
+        logger.debug("Policy: active incident exists — skipping new")
+        return False
+    return True
+
+
 def should_act_on_decision(decision: dict) -> bool:
     """
     Returns True if Claude's decision meets minimum confidence threshold.

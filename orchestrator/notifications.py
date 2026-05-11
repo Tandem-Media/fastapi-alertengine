@@ -244,3 +244,95 @@ async def send_secondary_escalation(incident_id: str, duration_s: float, score: 
             _send_fallback("Escalation", body)
             return False
     await _run_in_executor(_send)
+
+
+# ── Provider-based dispatch ────────────────────────────────────────────────────
+
+async def dispatch(
+    tenant: dict,
+    incident_id: str,
+    message: str,
+) -> bool:
+    """
+    Route and deliver notification via tenant's configured channel.
+    If tenant has slack_webhook_url configured, also send to Slack
+    as a secondary team-visibility channel.
+    Records every attempt in the delivery ledger.
+    Falls back to webhook if primary fails.
+    Never raises.
+    """
+    from providers import (
+        WhatsAppProvider, TelegramProvider,
+        WebhookProvider, SentProvider, SlackProvider,
+    )
+    from delivery_ledger import record_from_result
+
+    channel = tenant.get("notification_channel", "whatsapp")
+
+    # Select primary provider
+    if channel == "telegram":
+        primary = TelegramProvider()
+    elif channel == "sent":
+        primary = SentProvider()
+    else:
+        primary = WhatsAppProvider()
+
+    # Attempt primary
+    result = await primary.send(tenant, incident_id, message)
+    record_from_result(result)
+
+    # Secondary: Slack team channel (if configured, plan permitting)
+    if tenant.get("slack_webhook_url"):
+        from plans import get_tenant_plan
+        plan = get_tenant_plan(tenant)
+        if getattr(plan, "has_slack", False):
+            slack = SlackProvider()
+            slack_result = await slack.send(
+                tenant, incident_id, message)
+            record_from_result(slack_result)
+
+    if result.success:
+        return True
+
+    # Primary failed — attempt webhook fallback
+    logger.warning("Primary failed (%s) — trying webhook fallback",
+                   channel)
+    fallback        = WebhookProvider()
+    fallback_result = await fallback.send(tenant, incident_id, message)
+    record_from_result(fallback_result)
+
+    if not fallback_result.success:
+        logger.critical(
+            "ALL notifications failed for incident=%s tenant=%s",
+            incident_id, tenant.get("tenant_id"),
+        )
+
+    return fallback_result.success
+
+
+# ── Channel-aware routing ──────────────────────────────────────────────────────
+
+async def send_via_channel(
+    tenant: dict,
+    subject: str,
+    body: str,
+) -> bool:
+    """
+    Route notification to the tenant's configured channel.
+    WhatsApp → existing _send_with_fallback()
+    Telegram → telegram_notifier
+    """
+    channel = tenant.get("notification_channel", "whatsapp")
+
+    if channel == "telegram":
+        from telegram_notifier import send_telegram
+        bot_token = tenant.get("telegram_bot_token")
+        chat_id   = tenant.get("telegram_chat_id")
+        full_message = f"*{subject}*\n\n{body}"
+        return await send_telegram(bot_token, chat_id, full_message)
+
+    # Default: WhatsApp via existing _send_with_fallback
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, lambda: _send_with_fallback(subject, body)
+    )

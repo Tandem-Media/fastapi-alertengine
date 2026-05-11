@@ -1,18 +1,25 @@
 # orchestrator/onboard.py
 """
-Tenant onboarding API — FastAPI router.
+Standard onboarding flow with phone verification.
+
+Use this for production tenants who need WhatsApp/Telegram
+phone verification before activation.
 
 Endpoints:
-    POST /onboard                      Register new tenant
-    POST /verify                       Verify WhatsApp number
-    GET  /tenant/{tenant_id}           Get tenant status
-    GET  /tenant/{tenant_id}/contacts  Get contact verification status
-    POST /tenant/{tenant_id}/test      Trigger test incident
+    POST /onboard   — Register tenant, send verification codes
+    POST /verify    — Verify phone number, activate tenant
+    GET  /tenant/{id}          — Get tenant status
+    GET  /tenant/{id}/contacts — Get contact verification status
+    POST /tenant/{id}/test     — Trigger test incident
+
+For quick-start activation without phone verification,
+see onboarding_api.py.
 """
 
 import logging
 import os
 import time
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -27,6 +34,7 @@ from tenants import (
     mark_phone_verified,
     find_tenant_by_phone,
 )
+from plans import get_plan, get_tenant_plan, incident_quota_remaining
 
 logger = logging.getLogger("orchestrator.onboard")
 
@@ -38,9 +46,20 @@ TWILIO_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 # ── Request models ─────────────────────────────────────────────────────────────
 
 class OnboardRequest(BaseModel):
-    service_name:      str
-    health_url:        str
-    whatsapp_numbers:  list[str]
+    service_name:           str
+    health_url:             str
+    whatsapp_numbers:       list[str] = []
+    notification_channel:   str = "whatsapp"
+    plan:                   str = "solo"
+    telegram_bot_token:     Optional[str] = None
+    telegram_chat_id:       Optional[str] = None
+    twilio_account_sid:     Optional[str] = None
+    twilio_auth_token:      Optional[str] = None
+    twilio_whatsapp_from:   Optional[str] = None
+    sent_api_key:           Optional[str] = None
+    sent_phone_id:          Optional[str] = None
+    slack_webhook_url:      Optional[str] = None
+    slack_channel:          Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -81,11 +100,29 @@ def onboard(req: OnboardRequest):
     Register a new tenant.
     Sends verification codes to all WhatsApp numbers.
     """
-    if not req.whatsapp_numbers:
+    if req.notification_channel in ("whatsapp", "sent") and not req.whatsapp_numbers:
         raise HTTPException(status_code=400, detail="At least one WhatsApp number required")
 
     if not req.health_url.startswith("http"):
         raise HTTPException(status_code=400, detail="health_url must be a valid URL")
+
+    if req.notification_channel == "telegram":
+        if not req.telegram_bot_token or not req.telegram_chat_id:
+            raise HTTPException(
+                status_code=400,
+                detail="telegram_bot_token and telegram_chat_id are required for Telegram channel",
+            )
+
+    # Resolve effective notification channel — apply plan default when caller
+    # left notification_channel at its default "whatsapp" value.
+    effective_channel = req.notification_channel
+    if effective_channel == "whatsapp":
+        try:
+            plan = get_plan(req.plan)
+            if plan.default_provider and plan.default_provider != "whatsapp":
+                effective_channel = plan.default_provider
+        except Exception:
+            pass  # fall back to req.notification_channel silently
 
     # Normalise numbers to whatsapp: prefix
     numbers = []
@@ -98,28 +135,52 @@ def onboard(req: OnboardRequest):
         service_name=req.service_name,
         health_url=req.health_url,
         whatsapp_numbers=numbers,
+        plan=req.plan,
+        notification_channel=effective_channel,
+        telegram_bot_token=req.telegram_bot_token,
+        telegram_chat_id=req.telegram_chat_id,
+        twilio_account_sid=req.twilio_account_sid,
+        twilio_auth_token=req.twilio_auth_token,
+        twilio_whatsapp_from=req.twilio_whatsapp_from,
+        sent_api_key=req.sent_api_key,
+        sent_phone_id=req.sent_phone_id,
+        slack_webhook_url=req.slack_webhook_url,
+        slack_channel=req.slack_channel,
     )
 
-    # Send verification codes
+    # Send WhatsApp verification codes (WhatsApp channel only)
     sent    = []
     failed  = []
-    for number in numbers:
-        code = generate_verification_code(number)
-        ok   = _send_verification_whatsapp(number, code)
-        if ok:
-            sent.append(number)
-        else:
-            failed.append(number)
-            logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
+    if effective_channel in ("whatsapp", "sent"):
+        for number in numbers:
+            code = generate_verification_code(number)
+            ok   = _send_verification_whatsapp(number, code)
+            if ok:
+                sent.append(number)
+            else:
+                failed.append(number)
+                logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
+
+    if req.sent_api_key or effective_channel == "sent":
+        notification_config = "sent"
+    elif req.twilio_account_sid:
+        notification_config = "custom_twilio"
+    else:
+        notification_config = "shared"
 
     return {
-        "tenant_id":          tenant["tenant_id"],
-        "service_name":       tenant["service_name"],
-        "status":             "pending_verification",
-        "contacts_pending":   len(numbers),
-        "verification_sent":  sent,
-        "verification_failed": failed,
-        "next_step":          "POST /verify with your phone and code",
+        "tenant_id":             tenant["tenant_id"],
+        "service_name":          tenant["service_name"],
+        "notification_channel":  effective_channel,
+        "status":                tenant["status"],
+        "plan":                  req.plan,
+        "contacts_pending":      len(numbers),
+        "verification_sent":     sent,
+        "verification_failed":   failed,
+        "notification_config":   notification_config,
+        "slack_configured":      bool(req.slack_webhook_url),
+        "slack_available":       get_plan(req.plan).has_slack,
+        "next_step":             "POST /verify with your phone and code" if effective_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
     }
 
 
@@ -199,6 +260,14 @@ async def test_incident(tenant_id: str):
             detail=f"Tenant not active (status={tenant.get('status')}). Verify all contacts first."
         )
 
+    plan  = get_tenant_plan(tenant)
+    quota = incident_quota_remaining(tenant)
+    if quota == 0:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Incident quota exhausted for {plan.name} plan. Upgrade to continue."
+        )
+
     # Inject a synthetic critical health payload
     synthetic_health = {
         "health_score": {
@@ -228,7 +297,7 @@ async def test_incident(tenant_id: str):
     import asyncio
 
     # Don't overwrite real incident
-    existing = get_active_incident()
+    existing = get_active_incident(tenant_id=tenant_id)
     if existing and existing.get("tenant_id") == tenant_id:
         raise HTTPException(status_code=409, detail="Active incident already exists for this tenant")
 
@@ -243,14 +312,37 @@ async def test_incident(tenant_id: str):
     incident_record["tenant_id"] = tenant_id
     save_incident(incident_record)
 
+    from audit import append_event
+    append_event(
+        incident_id=incident_id,
+        stage="DETECTED",
+        decision="escalate",
+        reason="Test incident triggered via /test endpoint",
+        confidence=0.95,
+        tenant_id=tenant_id,
+    )
+
     # Send to all verified numbers
     verified = get_verified_numbers(tenant_id)
     base_url = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
-    token    = generate_recovery_token(incident_id)
+    token    = generate_recovery_token(incident_id, tenant_id=tenant_id)
     url      = f"{base_url}/action/recover?token={token}"
 
     from notifications import send_validation
-    fire(send_detection(incident_id, 20.0, 2500.0, 0.75))
+    import asyncio
+    from notifications import dispatch
+    asyncio.create_task(dispatch(
+        tenant=tenant,
+        incident_id=incident_id,
+        message=(
+            f"🚨 Test incident detected\n\n"
+            f"Score: 20/100\n"
+            f"P95: 2500ms\n"
+            f"Errors: 75%\n\n"
+            f"Incident: {incident_id}\n"
+            f"Recovery URL: {url}"
+        ),
+    ))
 
     return {
         "incident_id":     incident_id,

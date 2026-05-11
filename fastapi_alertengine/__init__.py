@@ -10,7 +10,6 @@ from .engine import AlertEngine
 from .middleware import RequestMetricsMiddleware
 from .client import get_alert_engine
 from .storage import aggregate, write_batch
-from .actions.router import router as actions_router
 
 __all__ = [
     "AlertEngine",
@@ -20,7 +19,6 @@ __all__ = [
     "aggregate",
     "write_batch",
     "instrument",
-    "actions_router",
 ]
 
 __version__ = "1.6.0"

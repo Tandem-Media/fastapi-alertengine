@@ -31,7 +31,7 @@ def _check_redis() -> tuple[bool, str]:
         return False, str(e)
 
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import uvicorn
 
 health_app = FastAPI(title="AlertEngine Orchestrator")
@@ -39,7 +39,11 @@ health_app = FastAPI(title="AlertEngine Orchestrator")
 # Mount onboarding router
 from onboard import router as onboard_router
 from onboarding_api import router as onboarding_router
+# Standard onboarding: phone verification flow (production)
+# See orchestrator/onboard.py
 health_app.include_router(onboard_router)
+# Quick-start onboarding: immediate activation (dev/testing)
+# See orchestrator/onboarding_api.py
 health_app.include_router(onboarding_router)
 
 
@@ -79,31 +83,149 @@ def status():
         from tenants import list_active_tenants
         from degraded import status as degraded_status
         from dlq import get_count as dlq_count
+        from pipeline import STAGE_GATES
+        from circuit_breaker import is_open
+
+        def cb_status(provider: str) -> dict:
+            return {"open": is_open(provider)}
+
         return {
             "active_tenants": len(list_active_tenants()),
             "degraded_mode":  degraded_status(),
             "dlq_count":      dlq_count(),
+            "stage_gates":    STAGE_GATES,
+            "circuit_breakers": {
+                "whatsapp": cb_status("whatsapp"),
+                "telegram": cb_status("telegram"),
+                "webhook":  cb_status("webhook"),
+                "sent":     cb_status("sent"),
+                "slack":    cb_status("slack"),
+            },
         }
     except Exception as e:
         return {"error": str(e)}
 
 
 @health_app.get("/audit/{incident_id}")
-def audit_log(incident_id: str):
+def audit_log(incident_id: str, tenant_id: str):
     try:
+        from tenants import get_tenant
         from audit import get_audit_log
-        return {"incident_id": incident_id, "log": get_audit_log(incident_id)}
+        tenant = get_tenant(tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=404,
+                                detail="Tenant not found")
+        log = get_audit_log(incident_id)
+        owned = (
+            any(e.get("tenant_id") == tenant_id for e in log)
+            or incident_id.startswith(f"inc-{tenant_id}")
+            or incident_id.startswith(f"test-{tenant_id}")
+        )
+        if log and not owned:
+            raise HTTPException(status_code=403,
+                                detail="Access denied to this incident")
+        return {"incident_id": incident_id, "log": log}
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        logger.error("audit_log error: %s", e)
+        raise HTTPException(status_code=500,
+                            detail="Internal server error")
+
+
+@health_app.get("/delivery/{incident_id}")
+def delivery_log(incident_id: str, tenant_id: str):
+    try:
+        from tenants import get_tenant
+        from delivery_ledger import get_delivery_log, all_failed
+        tenant = get_tenant(tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=404,
+                                detail="Tenant not found")
+        log = get_delivery_log(incident_id)
+        owned = (
+            any(e.get("tenant_id") == tenant_id for e in log)
+            or incident_id.startswith(f"inc-{tenant_id}")
+            or incident_id.startswith(f"test-{tenant_id}")
+        )
+        if log and not owned:
+            raise HTTPException(status_code=403,
+                                detail="Access denied to this incident")
+        return {
+            "incident_id": incident_id,
+            "attempts":    len(log),
+            "all_failed":  all_failed(incident_id),
+            "log":         log,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("delivery_log error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @health_app.get("/dlq")
-def dlq_entries():
+def dlq_entries(tenant_id: str):
     try:
+        from tenants import get_tenant
+        from plans import get_tenant_plan
         from dlq import get_all
+        tenant = get_tenant(tenant_id)
+        if not tenant:
+            raise HTTPException(status_code=404, detail="Tenant not found")
+        plan = get_tenant_plan(tenant)
+        if not plan.has_dlq_access:
+            raise HTTPException(
+                status_code=403,
+                detail=f"DLQ access not available on {tenant.get('plan', 'solo')} plan. Upgrade to startup or higher.",
+            )
         return {"entries": get_all(limit=20)}
+    except HTTPException:
+        raise
     except Exception as e:
-        return {"error": str(e)}
+        logger.error("dlq_entries error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@health_app.get("/action/recover")
+async def recover_action(token: str):
+    """
+    Human-authorized recovery endpoint.
+    Validates JWT token, enforces replay protection,
+    writes audit entry, and returns authorization confirmation.
+    Called when engineer taps the recovery link in WhatsApp/Telegram.
+    """
+    try:
+        from action_generator import validate_and_consume
+        valid, payload, reason = validate_and_consume(token)
+        if not valid:
+            raise HTTPException(status_code=401, detail=reason)
+        # Write audit entry for the authorization
+        try:
+            from audit import append_event
+            append_event(
+                incident_id=payload.get("incident_id", "unknown"),
+                stage="AUTHORIZED",
+                decision="recover",
+                reason="Engineer authorized recovery via secure link",
+                confidence=1.0,
+                actor="engineer",
+                tenant_id=payload.get("tenant_id"),
+            )
+        except Exception as audit_err:
+            logger.warning("Audit write failed on recovery: %s", audit_err)
+        return {
+            "authorized":    True,
+            "incident_id":   payload.get("incident_id"),
+            "tenant_id":     payload.get("tenant_id"),
+            "action":        payload.get("action"),
+            "authorized_at": time.time(),
+            "message":       "Recovery action authorized. System will execute fix.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _run_loop_safe():

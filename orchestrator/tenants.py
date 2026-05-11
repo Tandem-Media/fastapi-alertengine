@@ -18,11 +18,12 @@ from typing import Optional
 
 logger = logging.getLogger("orchestrator.tenants")
 
-TENANT_TTL       = 0        # permanent
-VERIFY_TTL       = 300      # 5 minutes
-TENANT_PREFIX    = "tenant:"
-VERIFY_PREFIX    = "verify:"
-ACTIVE_SET_KEY   = "orchestrator:active_tenants"
+TENANT_TTL        = 0        # permanent
+VERIFY_TTL        = 300      # 5 minutes
+TENANT_PREFIX     = "tenant:"
+VERIFY_PREFIX     = "verify:"
+ACTIVE_SET_KEY    = "orchestrator:active_tenants"
+PHONE_INDEX_PREFIX = "orchestrator:phone:"
 
 
 def _redis():
@@ -34,19 +35,52 @@ def _redis():
 
 # ── Tenant CRUD ────────────────────────────────────────────────────────────────
 
-def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list) -> dict:
+def create_tenant(
+    service_name: str,
+    health_url: str,
+    whatsapp_numbers: list,
+    plan: str = "solo",
+    notification_channel: str = "whatsapp",
+    telegram_bot_token: Optional[str] = None,
+    telegram_chat_id: Optional[str] = None,
+    twilio_account_sid: Optional[str] = None,
+    twilio_auth_token: Optional[str] = None,
+    twilio_whatsapp_from: Optional[str] = None,
+    sent_api_key: Optional[str] = None,
+    sent_phone_id: Optional[str] = None,
+    slack_webhook_url: Optional[str] = None,
+    slack_channel: Optional[str] = None,
+) -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
     now       = time.time()
 
+    # Telegram tenants have no phone contacts to verify — activate immediately
+    initial_status = "active" if notification_channel == "telegram" else "pending_verification"
+
     tenant = {
-        "schema_version": "1.0.0",
-        "tenant_id":      tenant_id,
-        "service_name":   service_name,
-        "health_url":     health_url,
-        "status":         "pending_verification",
-        "created_at":     now,
-        "last_updated":   now,
+        "schema_version":        "1.0.0",
+        "tenant_id":             tenant_id,
+        "service_name":          service_name,
+        "health_url":            health_url,
+        "status":                initial_status,
+        "notification_channel":  notification_channel,
+        "telegram_bot_token":    telegram_bot_token,
+        "telegram_chat_id":      telegram_chat_id,
+        "created_at":            now,
+        "last_updated":          now,
+        "plan":                  plan,
+        "twilio_account_sid":    twilio_account_sid,
+        "twilio_auth_token":     twilio_auth_token,
+        "twilio_whatsapp_from":  twilio_whatsapp_from,
+        "sent_api_key":          sent_api_key,
+        "sent_phone_id":         sent_phone_id,
+        "slack_webhook_url":     slack_webhook_url,
+        "slack_channel":         slack_channel,
+        "incident_count":        0,
+        "incidents_this_month":  0,
+        "billing_cycle_start":   now,
+        "services_monitored":    [],
     }
 
     contacts = [
@@ -61,6 +95,19 @@ def create_tenant(service_name: str, health_url: str, whatsapp_numbers: list) ->
     r = _redis()
     r.set(f"{TENANT_PREFIX}{tenant_id}", json.dumps(tenant))
     r.set(f"{TENANT_PREFIX}{tenant_id}:contacts", json.dumps(contacts))
+    r.sadd(ACTIVE_SET_KEY, tenant_id)
+    for number in whatsapp_numbers:
+        r.set(f"{PHONE_INDEX_PREFIX}{number}", tenant_id)
+
+    # Telegram tenants are active immediately — register in the active set now.
+    # WhatsApp tenants are added to the active set by activate_tenant() after verification.
+    # Note: if SADD fails, list_active_tenants() still finds this tenant via key scan
+    # (status=="active" in the record is authoritative). Log the error but don't fail.
+    if notification_channel == "telegram":
+        try:
+            r.sadd(ACTIVE_SET_KEY, tenant_id)
+        except Exception as e:
+            logger.error("create_tenant: failed to SADD to active set: %s", e)
 
     logger.info("Tenant created: %s (%s) — %d contacts pending verification",
                 tenant_id, service_name, len(contacts))
@@ -110,14 +157,18 @@ def save_contacts(tenant_id: str, contacts: list) -> bool:
 def list_active_tenants() -> list:
     """Return all tenants with status=active."""
     try:
-        r    = _redis()
-        keys = r.keys(f"{TENANT_PREFIX}*")
-        # Filter out :contacts and :incident keys
-        tenant_keys = [k for k in keys
-                       if ":" not in k.replace(TENANT_PREFIX, "", 1)]
+        r = _redis()
+        tenant_ids = r.smembers(ACTIVE_SET_KEY)
+        if not tenant_ids:
+            keys = r.keys(f"{TENANT_PREFIX}*")
+            tenant_ids = [
+                k.replace(TENANT_PREFIX, "")
+                for k in keys
+                if ":" not in k.replace(TENANT_PREFIX, "", 1)
+            ]
         tenants = []
-        for key in tenant_keys:
-            data = r.get(key)
+        for tenant_id in tenant_ids:
+            data = r.get(f"{TENANT_PREFIX}{tenant_id}")
             if data:
                 try:
                     t = json.loads(data)
@@ -137,7 +188,31 @@ def activate_tenant(tenant_id: str) -> bool:
         return False
     tenant["status"]       = "active"
     tenant["last_updated"] = time.time()
-    return save_tenant(tenant)
+    ok = save_tenant(tenant)
+    if ok:
+        # Keep ACTIVE_SET_KEY in sync. If SADD fails, list_active_tenants() still
+        # finds this tenant via key scan (status=="active" is authoritative).
+        try:
+            _redis().sadd(ACTIVE_SET_KEY, tenant_id)
+        except Exception as e:
+            logger.error("activate_tenant: failed to SADD to active set: %s", e)
+    return ok
+
+
+def deactivate_tenant(tenant_id: str) -> bool:
+    """Set tenant status to inactive and remove from the active set."""
+    try:
+        r      = _redis()
+        tenant = get_tenant(tenant_id)
+        if tenant:
+            tenant["status"]       = "inactive"
+            tenant["last_updated"] = time.time()
+            r.set(f"{TENANT_PREFIX}{tenant_id}", json.dumps(tenant))
+        r.srem(ACTIVE_SET_KEY, tenant_id)
+        return True
+    except Exception as e:
+        logger.error("deactivate_tenant failed: %s", e)
+        return False
 
 
 # ── Verification ───────────────────────────────────────────────────────────────
@@ -198,16 +273,7 @@ def mark_phone_verified(tenant_id: str, phone: str) -> bool:
 def find_tenant_by_phone(phone: str) -> Optional[str]:
     """Find which tenant owns a phone number."""
     try:
-        r    = _redis()
-        keys = r.keys(f"{TENANT_PREFIX}*:contacts")
-        for key in keys:
-            data = r.get(key)
-            if data:
-                contacts = json.loads(data)
-                for c in contacts:
-                    if c["phone"] == phone:
-                        tenant_id = key.replace(TENANT_PREFIX, "").replace(":contacts", "")
-                        return tenant_id
+        return _redis().get(f"{PHONE_INDEX_PREFIX}{phone}")
     except Exception as e:
         logger.error("find_tenant_by_phone failed: %s", e)
     return None
