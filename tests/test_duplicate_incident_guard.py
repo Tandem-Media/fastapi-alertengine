@@ -36,7 +36,7 @@ async def test_no_duplicate_incident_when_lock_held(orchestrator_path):
 
     @asynccontextmanager
     async def _lock(*_args, **_kwargs):
-        yield "token"
+        yield SimpleNamespace(valid=True)
 
     with ExitStack() as stack:
         stack.enter_context(patch("loop._fetch_health", new=AsyncMock(return_value=_critical_health())))
@@ -52,7 +52,6 @@ async def test_no_duplicate_incident_when_lock_held(orchestrator_path):
         stack.enter_context(patch("loop.validate_decision_schema", return_value=(True, "")))
         open_incident = stack.enter_context(patch("loop.open_incident"))
         stack.enter_context(patch("loop.is_executed", return_value=False))
-        stack.enter_context(patch("loop.mark_executed", return_value=True))
         await loop._process_tenant(tenant)
 
     open_incident.assert_not_called()
@@ -91,7 +90,6 @@ async def test_creation_lock_uses_tenant_scope(orchestrator_path):
         stack.enter_context(patch("loop.append_event"))
         stack.enter_context(patch("loop._execute_actions", new=AsyncMock(return_value={})))
         stack.enter_context(patch("loop.is_executed", return_value=False))
-        stack.enter_context(patch("loop.mark_executed", return_value=True))
         await loop._process_tenant(tenant)
 
     assert lock_calls == [("creating-5f858940", 10)]
@@ -105,7 +103,7 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
 
     @asynccontextmanager
     async def _lock(*_args, **_kwargs):
-        yield "token"
+        yield SimpleNamespace(valid=True)
 
     with ExitStack() as stack:
         stack.enter_context(patch("loop.time.time", return_value=1778294865.99))
@@ -127,11 +125,9 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
         stack.enter_context(patch("loop.save_tenant"))
         stack.enter_context(patch("loop.append_event"))
         stack.enter_context(patch("loop._execute_actions", new=AsyncMock(return_value={})))
-        is_executed = stack.enter_context(patch("loop.is_executed", side_effect=[False, True]))
-        mark_executed = stack.enter_context(patch("loop.mark_executed", return_value=True))
+        claim_action = stack.enter_context(patch("loop.claim_action", side_effect=[True, False]))
         await loop._process_tenant(tenant)
         await loop._process_tenant(tenant)
 
     assert open_incident.call_count == 1
-    assert is_executed.call_count == 2
-    assert mark_executed.call_count == 1
+    assert claim_action.call_count == 2
