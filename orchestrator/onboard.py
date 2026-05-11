@@ -113,16 +113,7 @@ def onboard(req: OnboardRequest):
                 detail="telegram_bot_token and telegram_chat_id are required for Telegram channel",
             )
 
-    # Resolve effective notification channel — apply plan default when caller
-    # left notification_channel at its default "whatsapp" value.
     effective_channel = req.notification_channel
-    if effective_channel == "whatsapp":
-        try:
-            plan = get_plan(req.plan)
-            if plan.default_provider and plan.default_provider != "whatsapp":
-                effective_channel = plan.default_provider
-        except Exception:
-            pass  # fall back to req.notification_channel silently
 
     # Normalise numbers to whatsapp: prefix
     numbers = []
