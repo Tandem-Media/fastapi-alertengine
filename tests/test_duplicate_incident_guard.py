@@ -126,6 +126,22 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
         stack.enter_context(patch("loop.claim_action", side_effect=_claim))
         stack.enter_context(patch("loop.claude_decide",
             new=AsyncMock(return_value={"action": "escalate", "confidence": 0.9})))
+        stack.enter_context(patch("loop.save_incident", return_value=True))
+        stack.enter_context(patch("loop._save_tenant_active"))
+        stack.enter_context(patch("loop.increment_incident_count",
+            return_value=tenant))
+        stack.enter_context(patch("loop.save_tenant"))
+        stack.enter_context(patch("loop.append_event"))
+        stack.enter_context(patch("loop._execute_actions",
+            new=AsyncMock(return_value={})))
+        stack.enter_context(patch("loop.open_incident",
+            return_value={"incident_id": "inc-5f858940-1778294865",
+                          "tenant_id": "5f858940"}))
+        stack.enter_context(patch("loop.decide_new_incident",
+            return_value={"actions": [], "reason": "x",
+                          "confidence": 0.9, "next_stage": "DETECTED"}))
+        stack.enter_context(patch("loop.validate_decision_schema",
+            return_value=(True, "")))
 
         await loop._process_tenant(tenant)
         await loop._process_tenant(tenant)
