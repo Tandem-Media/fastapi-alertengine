@@ -171,3 +171,28 @@ def test_real_incident_whatsapp_route_uses_tenant_dispatch(orchestrator_path):
     assert dispatched_tenant["whatsapp_numbers"] == ["+263785023897"]
     assert incident_id == "inc9001"
     assert "inc9001" in message
+
+
+def test_real_incident_whatsapp_dispatch_error_returns_false(orchestrator_path):
+    import loop
+
+    tenant = {
+        "tenant_id": "tenantx",
+        "notification_channel": "whatsapp",
+        "whatsapp_numbers": ["+263785023897"],
+    }
+
+    with patch("loop.dispatch_notification", new=AsyncMock(return_value=False)) as mock_dispatch:
+        result = asyncio.get_event_loop().run_until_complete(
+            loop._send_tenant_notification(
+                tenant,
+                "DETECTION",
+                "inc9002",
+                95,
+                180,
+                0.05,
+            )
+        )
+
+    assert result is False
+    mock_dispatch.assert_awaited_once()
