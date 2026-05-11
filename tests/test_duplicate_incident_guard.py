@@ -98,15 +98,10 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
     import loop
 
     tenant = {"tenant_id": "5f858940", "health_url": "http://health", "plan": "solo"}
-    claim_calls = []
 
     @asynccontextmanager
     async def _lock(*_args, **_kwargs):
         yield SimpleNamespace(valid=True)
-
-    def _claim(action_id, metadata=None):
-        claim_calls.append(action_id)
-        return len(claim_calls) == 1
 
     with ExitStack() as stack:
         stack.enter_context(patch("loop.time.time", return_value=1778294865.99))
@@ -123,7 +118,6 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
             return_value=SimpleNamespace(has_claude_decision=True)))
         stack.enter_context(patch("loop.should_open_new_incident",
             return_value=True))
-        stack.enter_context(patch("loop.claim_action", side_effect=_claim))
         stack.enter_context(patch("loop.claude_decide",
             new=AsyncMock(return_value={"action": "escalate", "confidence": 0.9})))
         stack.enter_context(patch("loop.save_incident", return_value=True))
@@ -134,7 +128,7 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
         stack.enter_context(patch("loop.append_event"))
         stack.enter_context(patch("loop._execute_actions",
             new=AsyncMock(return_value={})))
-        stack.enter_context(patch("loop.open_incident",
+        open_mock = stack.enter_context(patch("loop.open_incident",
             return_value={"incident_id": "inc-5f858940-1778294865",
                           "tenant_id": "5f858940"}))
         stack.enter_context(patch("loop.decide_new_incident",
@@ -142,8 +136,10 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
                           "confidence": 0.9, "next_stage": "DETECTED"}))
         stack.enter_context(patch("loop.validate_decision_schema",
             return_value=(True, "")))
+        stack.enter_context(patch("loop.claim_action",
+            side_effect=[True, False]))
 
         await loop._process_tenant(tenant)
         await loop._process_tenant(tenant)
 
-    assert len(claim_calls) == 1
+    assert open_mock.call_count == 1
