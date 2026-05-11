@@ -1,16 +1,30 @@
-import asyncio
-from contextlib import asynccontextmanager
-from contextlib import ExitStack
+import sys
+from contextlib import ExitStack, asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
 import pytest
+
+ORCHESTRATOR_DIR = Path(__file__).resolve().parents[1] / "orchestrator"
+
+
+@pytest.fixture
+def orchestrator_path():
+    path = str(ORCHESTRATOR_DIR)
+    sys.path.insert(0, path)
+    try:
+        yield
+    finally:
+        sys.path = [p for p in sys.path if p != path]
+        for mod in ("loop", "policy", "lock", "idempotency"):
+            sys.modules.pop(mod, None)
 
 
 def _critical_health():
     return {
-        "health_score": {"score": 15, "status": "critical"},
-        "metrics": {"overall_p95_ms": 2500.0, "error_rate": 0.75},
-        "alerts": [{"severity": "critical"}],
+        "health_score": {"status": "critical", "score": 20},
+        "metrics": {"overall_p95_ms": 450, "error_rate": 0.25},
     }
 
 
@@ -76,7 +90,7 @@ async def test_creation_lock_uses_tenant_scope(orchestrator_path):
 
         await loop._process_tenant(tenant)
 
-    assert any("creating-5f858940" in str(call) for call in lock_calls)
+    assert lock_calls[0] == ("creating-5f858940", 10)
 
 
 @pytest.mark.asyncio
@@ -116,4 +130,4 @@ async def test_idempotency_prevents_double_creation(orchestrator_path):
         await loop._process_tenant(tenant)
         await loop._process_tenant(tenant)
 
-    assert len(claim_calls) >= 1
+    assert len(claim_calls) == 1
