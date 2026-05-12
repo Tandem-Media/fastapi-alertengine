@@ -22,16 +22,27 @@ def orchestrator_path():
             sys.modules.pop(module_name, None)
 
 
-def test_action_recover_endpoint_is_mounted_and_blocks_replay(orchestrator_path, monkeypatch):
+def test_action_recover_preview_is_side_effect_free_and_confirm_consumes_token(orchestrator_path, monkeypatch):
     import action_generator
+    import audit
     import main
 
     consumed_tokens = set()
-    call_count = 0
+    consume_call_count = 0
+    audit_calls = []
+
+    def fake_verify_recovery_token(token):
+        if token != "signed-token":
+            return None
+        return {
+            "incident_id": "inc-tenant-123-1",
+            "tenant_id": "tenant-123",
+            "action": "restart",
+        }
 
     def fake_validate_and_consume(token, expected_tenant_id=None):
-        nonlocal call_count
-        call_count += 1
+        nonlocal consume_call_count
+        consume_call_count += 1
         assert expected_tenant_id is None
         if token in consumed_tokens:
             return False, None, "Token already used"
@@ -42,24 +53,42 @@ def test_action_recover_endpoint_is_mounted_and_blocks_replay(orchestrator_path,
             "action": "restart",
         }, "ok"
 
+    def fake_append_event(**kwargs):
+        audit_calls.append(kwargs)
+        return True
+
+    monkeypatch.setattr(action_generator, "verify_recovery_token", fake_verify_recovery_token)
     monkeypatch.setattr(action_generator, "validate_and_consume", fake_validate_and_consume)
+    monkeypatch.setattr(audit, "append_event", fake_append_event)
 
     client = TestClient(main.health_app)
     openapi = client.get("/openapi.json")
     assert openapi.status_code == 200
     assert "/action/recover" in openapi.json()["paths"]
+    assert "/action/recover/confirm" in openapi.json()["paths"]
 
-    first = client.get("/action/recover", params={"token": "signed-token"})
-    assert first.status_code == 200
-    assert first.json()["authorized"] is True
-    assert first.json()["incident_id"] == "inc-tenant-123-1"
-    assert first.json()["tenant_id"] == "tenant-123"
-    assert first.json()["action"] == "restart"
+    first_preview = client.get("/action/recover", params={"token": "signed-token"})
+    assert first_preview.status_code == 200
+    assert "AlertEngine Recovery Authorization" in first_preview.text
+    assert "Incident: inc-tenant-123-1" in first_preview.text
+    assert "Action: restart" in first_preview.text
 
-    second = client.get("/action/recover", params={"token": "signed-token"})
-    assert second.status_code == 401
-    assert second.json()["detail"] == "Token already used"
-    assert call_count == 2
+    second_preview = client.get("/action/recover", params={"token": "signed-token"})
+    assert second_preview.status_code == 200
+    assert consume_call_count == 0
+    assert len(audit_calls) == 0
+
+    first_confirm = client.post("/action/recover/confirm", params={"token": "signed-token"})
+    assert first_confirm.status_code == 200
+    assert first_confirm.json()["authorized"] is True
+    assert first_confirm.json()["incident_id"] == "inc-tenant-123-1"
+    assert consume_call_count == 1
+    assert len(audit_calls) == 1
+    assert audit_calls[0]["stage"] == "AUTHORIZED"
+
+    second_confirm = client.post("/action/recover/confirm", params={"token": "signed-token"})
+    assert second_confirm.status_code == 401
+    assert second_confirm.json()["detail"] == "Token already used"
 
 
 def test_generate_recovery_token_embeds_actual_tenant_id(orchestrator_path, monkeypatch):
@@ -82,8 +111,7 @@ def test_generate_recovery_token_embeds_actual_tenant_id(orchestrator_path, monk
 
 
 def test_recover_action_writes_audit_entry(orchestrator_path, monkeypatch):
-    """Verify /action/recover writes an AUTHORIZED audit entry
-    on successful token consumption."""
+    """Verify /action/recover/confirm writes an AUTHORIZED audit entry."""
     import action_generator
     import main
 
@@ -111,8 +139,11 @@ def test_recover_action_writes_audit_entry(orchestrator_path, monkeypatch):
     from fastapi.testclient import TestClient
     client = TestClient(main.health_app)
 
-    resp = client.get("/action/recover",
-                      params={"token": "valid-token"})
+    preview_resp = client.get("/action/recover", params={"token": "valid-token"})
+    assert preview_resp.status_code == 401
+    assert len(audit_calls) == 0
+
+    resp = client.post("/action/recover/confirm", params={"token": "valid-token"})
     assert resp.status_code == 200
     assert resp.json()["authorized"] is True
 
