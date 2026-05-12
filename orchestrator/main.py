@@ -5,9 +5,11 @@ Exposes health + onboarding API. Starts multi-tenant loop.
 """
 
 import asyncio
+import html
 import logging
 import os
 import time
+from urllib.parse import quote
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,7 +50,7 @@ health_app.include_router(onboarding_router)
 
 
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 import os as _os
 
 _STATIC_DIR = _os.path.join(_os.path.dirname(__file__), "static")
@@ -189,6 +191,44 @@ def dlq_entries(tenant_id: str):
 
 @health_app.get("/action/recover")
 async def recover_action(token: str):
+    """
+    Side-effect-free recovery preview endpoint.
+    Verifies token signature/expiry and asks for explicit confirmation.
+    """
+    try:
+        from action_generator import verify_recovery_token
+
+        payload = verify_recovery_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+        incident_id = html.escape(str(payload.get("incident_id", "unknown")), quote=True)
+        action = html.escape(str(payload.get("action", "unknown")), quote=True)
+        encoded_token = quote(token, safe="")
+        confirm_url = html.escape(f"/action/recover/confirm?token={encoded_token}", quote=True)
+        return HTMLResponse(
+            content=(
+                "<h2>⚡ AlertEngine Recovery Authorization</h2>"
+                f"<p>Incident: {incident_id}</p>"
+                f"<p>Action: {action}</p>"
+                "<p><strong>Are you sure you want to authorize this recovery?</strong></p>"
+                "<p>This action cannot be undone. "
+                "Token expires 5 minutes after incident detection.</p>"
+                f'<form method="post" action="{confirm_url}">'
+                '<button style="background:#2563eb;color:#fff;border:none;'
+                'padding:10px 16px;border-radius:6px;font-weight:600;cursor:pointer;"'
+                ' type="submit">Confirm Recovery</button>'
+                "</form>"
+            )
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@health_app.post("/action/recover/confirm")
+async def recover_action_confirm(token: str):
     """
     Human-authorized recovery endpoint.
     Validates JWT token, enforces replay protection,
