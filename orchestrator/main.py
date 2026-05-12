@@ -202,9 +202,10 @@ async def recover_action(token: str):
         if not payload:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-        incident_id = html.escape(str(payload.get("incident_id", "unknown")))
-        action = html.escape(str(payload.get("action", "unknown")))
-        token_q = quote(token, safe="")
+        incident_id = html.escape(str(payload.get("incident_id", "unknown")), quote=True)
+        action = html.escape(str(payload.get("action", "unknown")), quote=True)
+        encoded_token = quote(token, safe="")
+        confirm_url = html.escape(f"/action/recover/confirm?token={encoded_token}", quote=True)
         return HTMLResponse(
             content=(
                 "<h2>⚡ AlertEngine Recovery Authorization</h2>"
@@ -213,7 +214,7 @@ async def recover_action(token: str):
                 "<p><strong>Are you sure you want to authorize this recovery?</strong></p>"
                 "<p>This action cannot be undone. "
                 "Token expires 5 minutes after incident detection.</p>"
-                f'<form method="post" action="/action/recover/confirm?token={token_q}">'
+                f'<form method="post" action="{confirm_url}">'
                 '<button style="background:#2563eb;color:#fff;border:none;'
                 'padding:10px 16px;border-radius:6px;font-weight:600;cursor:pointer;"'
                 ' type="submit">Confirm Recovery</button>'

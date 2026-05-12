@@ -124,10 +124,20 @@ def test_recover_action_writes_audit_entry(orchestrator_path, monkeypatch):
             "action":      "restart",
         }, "ok"
 
+    def fake_verify_recovery_token(token):
+        if token != "valid-token":
+            return None
+        return {
+            "incident_id": "inc-test-001",
+            "tenant_id": "tenant-test",
+            "action": "restart",
+        }
+
     def fake_append_event(**kwargs):
         audit_calls.append(kwargs)
         return True
 
+    monkeypatch.setattr(action_generator, "verify_recovery_token", fake_verify_recovery_token)
     monkeypatch.setattr(action_generator,
                         "validate_and_consume",
                         fake_validate_and_consume)
@@ -140,7 +150,7 @@ def test_recover_action_writes_audit_entry(orchestrator_path, monkeypatch):
     client = TestClient(main.health_app)
 
     preview_resp = client.get("/action/recover", params={"token": "valid-token"})
-    assert preview_resp.status_code == 401
+    assert preview_resp.status_code == 200
     assert len(audit_calls) == 0
 
     resp = client.post("/action/recover/confirm", params={"token": "valid-token"})
