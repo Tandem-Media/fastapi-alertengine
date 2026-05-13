@@ -1,8 +1,6 @@
-# ⚡ fastapi-alertengine
+# FastAPI incident intelligence with human-approved recovery.
 
-**Your API broke. A customer told you. That's the problem we solve.**
-
-Human-authorized incident recovery for FastAPI — via WhatsApp or Telegram.
+Add one line to your FastAPI app. Detect latency spikes, error surges, and degraded health. Get WhatsApp or Telegram recovery approvals that require your explicit authorization.
 
 [![PyPI](https://img.shields.io/pypi/v/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
 [![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
@@ -11,24 +9,7 @@ Human-authorized incident recovery for FastAPI — via WhatsApp or Telegram.
 
 ---
 
-## What Is This?
-
-**fastapi-alertengine** is two things:
-
-### 1. Free PyPI Package — `pip install fastapi-alertengine`
-Drop-in P95 latency monitoring and error rate detection for FastAPI.
-One line of code. No Prometheus. No Grafana. No dashboards.
-
-### 2. Paid Orchestrator — Managed Incident Recovery
-An AI-powered orchestration layer that watches your health endpoint,
-diagnoses incidents in plain English, and sends you a WhatsApp or
-Telegram message with a one-tap recovery link.
-
-**AI detects. You authorize. Nothing runs without your approval.**
-
----
-
-## Quick Start — Free Package (30 seconds)
+## Install + Quickstart
 
 ```bash
 pip install fastapi-alertengine
@@ -42,7 +23,9 @@ app = FastAPI()
 instrument(app)  # that's it
 ```
 
-Your app now exposes:
+Your app now exposes /health/alerts.
+
+Additional endpoints:
 
 | Endpoint | Description |
 |----------|-------------|
@@ -53,7 +36,48 @@ Your app now exposes:
 
 ---
 
-## What You Get
+## Proof Strip
+
+- 232 tests passing (Python 3.10, 3.11, 3.12)
+- Adversarial audit by autonomous AI agent: 10/10 passed
+  (replay attacks, cross-tenant isolation, concurrent
+  token floods)
+- Live production tenant: HustlerOS
+  (WhatsApp commerce platform, Zimbabwe)
+- Human-authorized recovery confirmed end-to-end
+
+---
+
+## How It Works
+
+- Step 1: instrument(app) — local incident sensing begins
+- Step 2: /health/alerts — P95, error rate, health score 0-100
+- Step 3: Managed orchestrator detects degradation, Claude diagnoses root cause in plain English
+- Step 4: WhatsApp/Telegram alert arrives — you tap to authorize recovery. Nothing executes without you.
+
+---
+
+## Local Incident Sensing — Free Forever
+
+- **Category:** FastAPI incident intelligence
+- **Free SDK =** Local Incident Sensing
+- **Core promise:** Nothing executes without your approval
+
+### Features
+
+- **P95 latency tracking** — not averages, real percentiles
+- **Error rate detection** — 4xx/5xx with configurable thresholds
+- **Anomaly scoring** — detects spikes vs your baseline
+- **Adaptive thresholds** — learns your normal traffic pattern
+- **Rate-of-change detection** — catches sudden spikes below thresholds
+- **Health score 0-100** — composite score with trend analysis
+- **Action suggestions** — maps health to notify, alert, restart
+- **Incident replay** — reconstruct state from append-only audit log
+- **Circuit breaker** — buffers events during Redis outages
+- **Memory mode** — never crashes your app when Redis is unavailable
+- **AI-agent friendly** — clean API, works with Claude/Copilot/Cursor
+
+### What You Get
 
 ```json
 {
@@ -76,9 +100,8 @@ Your app now exposes:
 }
 ```
 
----
+### Pipeline
 
-## How It Works
 FastAPI Request
 ↓
 RequestMetricsMiddleware  ← measures latency + status
@@ -91,23 +114,9 @@ Alert Engine              ← P95 + error rate + anomaly scoring
 
 ---
 
-## Features — Free Package
+## Managed Incident Command — Paid
 
-- **P95 latency tracking** — not averages, real percentiles
-- **Error rate detection** — 4xx/5xx with configurable thresholds
-- **Anomaly scoring** — detects spikes vs your baseline
-- **Adaptive thresholds** — learns your normal traffic pattern
-- **Rate-of-change detection** — catches sudden spikes below thresholds
-- **Health score 0-100** — composite score with trend analysis
-- **Action suggestions** — maps health to notify, alert, restart
-- **Incident replay** — reconstruct state from append-only audit log
-- **Circuit breaker** — buffers events during Redis outages
-- **Memory mode** — never crashes your app when Redis is unavailable
-- **AI-agent friendly** — clean API, works with Claude/Copilot/Cursor
-
----
-
-## Orchestrator — Managed Incident Recovery
+- **Paid orchestrator =** Managed Incident Command
 
 The orchestrator is the paid layer on top of the free package.
 It polls your health endpoint, runs AI diagnosis via Claude,
@@ -124,7 +133,6 @@ You tap Approve
 Fix executes (restart, scale, clear cache)
 You receive confirmation when system recovers
 
-
 Nothing executes without your explicit approval.
 
 ### Notification Channels
@@ -136,15 +144,6 @@ Nothing executes without your explicit approval.
 | Telegram | Telegram Bot API | All | Developers, North America |
 | Slack | Incoming Webhooks | Startup+ | Team transparency |
 | Webhook | HTTP POST | All | Slack/Teams/PagerDuty fallback |
-
-### Pricing
-
-| Tier | Price | Services | Incidents/mo | Slack | Voice |
-|------|-------|----------|--------------|-------|-------|
-| Solo | $399 | 1 | 50 | ❌ | ❌ |
-| Startup | $799 | 5 | 200 | ✅ | ✅ |
-| Scale | $1,500 | 20 | 1,000 | ✅ | ✅ |
-| Enterprise | Custom | Unlimited | Unlimited | ✅ | ✅ |
 
 ### Orchestrator API
 
@@ -168,6 +167,30 @@ Nothing executes without your explicit approval.
 
 > `/onboarding/*` endpoints are quick-start flows for dev/testing.
 > Use `/onboard` + `/verify` for production phone-verified deployments.
+
+---
+
+## Human-Authorized. Always.
+
+- GET /action/recover = preview only (safe to open)
+- POST /action/recover/confirm = irreversible authorization
+- JWT tokens: tenant-scoped, time-limited, single-use
+- Replay protection: atomic Redis SET NX
+- 3-layer duplicate incident guard
+- Immutable audit trail on every action
+- Adversarial audit: 10/10 checks passed
+
+---
+
+## Pricing
+
+| Tier | Price | Services | Incidents/mo | Channels |
+|------|-------|----------|--------------|----------|
+| Developer | $99/mo | 1 | 10 | WhatsApp |
+| Solo | $299/mo | 3 | 50 | WhatsApp + Telegram |
+| Startup | $799/mo | 10 | 200 | WhatsApp + Telegram + Slack |
+| Scale | $1,500/mo | 20 | 1,000 | WhatsApp + Telegram + Slack + Voice |
+| Enterprise | Custom | Custom | Custom | Custom |
 
 ---
 
@@ -203,6 +226,8 @@ Nothing executes without your explicit approval.
 ---
 
 ## Repository Structure
+
+```text
 fastapi_alertengine/     ← Free PyPI package
 middleware.py          ← RequestMetricsMiddleware
 engine.py             ← Core alert engine
@@ -219,7 +244,8 @@ audit.py             ← Immutable forensic log
 plans.py             ← Billing tiers and feature gates
 examples/               ← Demo scripts
 docs/                   ← Agent integration guide
-tests/                  ← 220+ tests, Python 3.10/3.11/3.12
+tests/                  ← 232 tests, Python 3.10/3.11/3.12
+```
 
 ---
 
@@ -246,7 +272,7 @@ authorization, and overwhelm the system with concurrent requests.
 pip install fastapi-alertengine
 ```
 
-**Managed orchestrator (Solo — $399):**
+**Managed orchestrator (Developer — $99/mo):**
 Contact: anchorflow@outlook.com
 
 **Upwork:**
@@ -254,7 +280,17 @@ Contact: anchorflow@outlook.com
 
 ---
 
-## License
+## Built for mobile-first operational reality
+
+Built in Zimbabwe where WhatsApp is the operational
+control plane and engineering teams are mobile-first.
+Designed for FastAPI teams everywhere who want incident
+intelligence without telemetry sprawl.
+
+---
+
+## License + Contact
 
 MIT — free package only.
 The orchestrator is a commercial service.
+Contact: anchorflow@outlook.com

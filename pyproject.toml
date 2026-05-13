@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fastapi-alertengine"
 version = "1.6.0"
-description = "FastAPI AlertEngine: production-ready request monitoring with p95 latency, error rate, Slack alerts, and zero-config instrument() setup."
+description = "FastAPI incident intelligence with human-approved recovery. P95 latency tracking, adaptive health scoring, and WhatsApp/Telegram recovery approvals that require explicit human authorization before any action executes."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
