@@ -559,7 +559,6 @@
     </div>
     <div class="hero-btns">
       <a href="https://github.com/Tandem-Media/fastapi-alertengine" target="_blank" rel="noopener" class="btn btn-primary">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>
         View on GitHub
       </a>
       <a href="mailto:anchorflow@outlook.com?subject=Managed%20Pilot%20Request" class="btn btn-ghost">Request Managed Pilot</a>
@@ -608,7 +607,7 @@
       <div class="step">
         <div class="step-num">2</div>
         <h3>Detect</h3>
-        <p>The orchestrator polls <code style="color:var(--success);font-size:0.8125rem;">/health/alerts</code> every 5 seconds. Adaptive thresholds flag anomalies as they emerge — not after customers complain.</p>
+        <p>The orchestrator polls <code style="color:var(--success);font-size:0.8125rem;">/health/alerts</code> every 5 seconds. Adaptive thresholds flag anomalies as they emerge — not after customer complaints.</p>
       </div>
       <div class="step">
         <div class="step-num">3</div>
@@ -643,23 +642,23 @@
       </ul>
       <div>
         <div class="code-block">
-<span class="c"># Install</span>
-<span class="kw">pip install</span> fastapi-alertengine
+# Install
+pip install fastapi-alertengine
 
-<span class="c"># In your FastAPI app</span>
-<span class="kw">from</span> fastapi <span class="kw">import</span> FastAPI
-<span class="kw">from</span> fastapi_alertengine <span class="kw">import</span> <span class="fn">instrument</span>
+# In your FastAPI app
+from fastapi import FastAPI
+from fastapi_alertengine import instrument
 
 app = FastAPI()
-<span class="fn">instrument</span>(app)  <span class="c"># ← that's it</span>
+instrument(app)  # ← that's it
 
-<span class="c"># Now visit /health/alerts</span>
-<span class="c"># {</span>
-<span class="c">#   "health_score": 94,</span>
-<span class="c">#   "p95_latency_ms": 42,</span>
-<span class="c">#   "error_rate": 0.002,</span>
-<span class="c">#   "alerts": []</span>
-<span class="c"># }</span>
+# Now visit /health/alerts
+# {
+#   "health_score": 94,
+#   "p95_latency_ms": 42,
+#   "error_rate": 0.002,
+#   "alerts": []
+# }
         </div>
       </div>
     </div>
@@ -673,6 +672,12 @@ app = FastAPI()
     <h2 class="section-title">Simple, honest pricing.</h2>
     <p class="section-sub">The SDK is free forever. Pay only for the managed orchestration layer.</p>
     <div class="pricing-grid">
+      <div class="price-card">
+        <div class="price-name">Hobby</div>
+        <div class="price-amount">$19<span>/mo</span></div>
+        <p class="price-desc">1 service. 5 incidents. Telegram only. Ideal for evaluating AlertEngine on a small project.</p>
+        <a href="mailto:anchorflow@outlook.com?subject=Hobby%20Plan" class="btn btn-ghost">Get started</a>
+      </div>
       <div class="price-card">
         <div class="price-name">Developer</div>
         <div class="price-amount">$99<span>/mo</span></div>
@@ -755,8 +760,8 @@ app = FastAPI()
         <div class="origin-flag">🇿🇼</div>
         <p class="origin-quote">Built in <em>Zimbabwe</em> for mobile-first operational reality.</p>
         <p class="origin-body">
-          A latency spike in Zimbabwe means a customer walks away mid-transaction. We built FastAPI AlertEngine while running HustlerOS — a WhatsApp-native commerce platform — where every failure costs real money for real merchants.<br><br>
-          Mobile-first isn't a design choice here. It's the infrastructure constraint. WhatsApp approvals aren't a novelty — they're the most reliable channel we have. AlertEngine is what we needed and couldn't find.
+          A latency spike in Zimbabwe means a customer walks away mid-transaction. We built FastAPI AlertEngine while running HustlerOS — a WhatsApp-native commerce platform — where every failure was visible first on mobile.
+          Mobile-first isn't a design choice here. It's the infrastructure constraint. WhatsApp approvals aren't a novelty — they're the most reliable channel we have. AlertEngine is what we needed ourselves.
         </p>
       </div>
       <div class="origin-stat-grid">
@@ -792,7 +797,6 @@ app = FastAPI()
     </div>
     <div class="hero-btns">
       <a href="https://github.com/Tandem-Media/fastapi-alertengine" target="_blank" rel="noopener" class="btn btn-primary">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/></svg>
         View on GitHub
       </a>
       <a href="mailto:anchorflow@outlook.com?subject=Managed%20Pilot%20Request" class="btn btn-ghost">Request Managed Pilot</a>
