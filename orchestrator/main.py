@@ -19,6 +19,38 @@ logger = logging.getLogger("orchestrator")
 
 _START_TIME = time.time()
 
+INSECURE_DEFAULTS = {
+    "change-this-in-prod",
+    "secret",
+    "your-secret-key",
+    "changeme",
+    "alertengine",
+    "default",
+    "",
+}
+
+
+def _validate_alert_secret() -> None:
+    secret = os.getenv("ALERT_SECRET", "")
+    env = os.getenv("ENVIRONMENT", "development").lower()
+    is_production = env == "production"
+
+    weak = secret in INSECURE_DEFAULTS or len(secret) < 32
+
+    if weak and is_production:
+        raise RuntimeError(
+            "ALERT_SECRET is insecure. Set a cryptographically "
+            "random secret of at least 32 characters before "
+            "deploying to production. "
+            "Generate one with: python -c \"import secrets; "
+            "print(secrets.token_hex(32))\""
+        )
+    elif weak:
+        logger.warning(
+            "ALERT_SECRET is weak or using an insecure default. "
+            "Set a strong secret before going to production."
+        )
+
 
 def _check_redis() -> tuple[bool, str]:
     try:
@@ -33,10 +65,18 @@ def _check_redis() -> tuple[bool, str]:
         return False, str(e)
 
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 import uvicorn
 
-health_app = FastAPI(title="AlertEngine Orchestrator")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _validate_alert_secret()
+    yield
+
+
+health_app = FastAPI(title="AlertEngine Orchestrator", lifespan=lifespan)
 
 # Mount onboarding router
 from onboard import router as onboard_router
