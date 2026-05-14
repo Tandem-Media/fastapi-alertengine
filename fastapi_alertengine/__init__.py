@@ -61,5 +61,12 @@ def instrument(
     redis_client = redis_lib.Redis.from_url(config.redis_url, decode_responses=True)
     engine = get_alert_engine(config=config, redis_client=redis_client)
     engine.start(app, health_path=health_path)
+    try:
+        from fastapi_alertengine.demo import (
+            register_demo_routes,
+            _is_demo_allowed,
+        )
+        register_demo_routes(app, engine)
+    except Exception:
+        pass
     return engine
-
