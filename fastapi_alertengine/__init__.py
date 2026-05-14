@@ -62,28 +62,11 @@ def instrument(
     engine = get_alert_engine(config=config, redis_client=redis_client)
     engine.start(app, health_path=health_path)
     try:
-        from pydantic import BaseModel
-        import fastapi_alertengine.demo as demo_module
         from fastapi_alertengine.demo import (
             register_demo_routes,
             _is_demo_allowed,
         )
-
-        class SimulateRequest(BaseModel):
-            scenario: str = "latency_spike"
-            duration_seconds: int = 30
-            intensity: str = "moderate"
-
-        demo_module.SimulateRequest = SimulateRequest
-        if not hasattr(engine, "enqueue"):
-            engine.enqueue = engine.enqueue_metric
-
-        demo_registered = False
-        if _is_demo_allowed():
-            register_demo_routes(app, engine)
-            demo_registered = True
-        if not demo_registered:
-            register_demo_routes(app, engine)
+        register_demo_routes(app, engine)
     except Exception:
         pass
     return engine

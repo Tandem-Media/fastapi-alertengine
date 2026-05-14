@@ -1,4 +1,3 @@
-from __future__ import annotations
 import logging
 import os
 import random
@@ -163,7 +162,10 @@ def register_demo_routes(app: Any, engine: Any) -> None:
         injected = 0
         try:
             for sample in samples:
-                engine.enqueue(sample)
+                if hasattr(engine, "enqueue"):
+                    engine.enqueue(sample)
+                else:
+                    engine.enqueue_metric(sample)
                 injected += 1
         except Exception as exc:
             logger.warning(
