@@ -186,6 +186,7 @@ Nothing executes without your explicit approval.
 
 | Tier | Price | Services | Incidents/mo | Channels |
 |------|-------|----------|--------------|----------|
+| Hobby | $19/mo | 1 | 5 | Telegram only |
 | Developer | $99/mo | 1 | 10 | WhatsApp |
 | Solo | $299/mo | 3 | 50 | WhatsApp + Telegram |
 | Startup | $799/mo | 10 | 200 | WhatsApp + Telegram + Slack |
