@@ -131,6 +131,17 @@ memory mode rather than crashing or returning errors.
 Graceful degradation is more important than strict
 Redis dependency.
 
+### Claude AI dependency
+The managed orchestrator uses Claude AI for root-cause
+diagnosis. If Claude is unavailable:
+- Incident detection continues normally
+- WhatsApp/Telegram alerts still fire
+- Diagnosis falls back to rule-based classification
+- Human authorization is still required
+
+Core incident response never depends solely on AI
+availability.
+
 ---
 
 ## Roadmap items (not yet built)
