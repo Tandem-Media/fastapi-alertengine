@@ -78,12 +78,11 @@ def instrument(
         if not hasattr(engine, "enqueue"):
             engine.enqueue = engine.enqueue_metric
 
+        demo_registered = False
         if _is_demo_allowed():
             register_demo_routes(app, engine)
-        if not any(
-            getattr(route, "path", None) == "/demo/simulate"
-            for route in app.routes
-        ):
+            demo_registered = True
+        if not demo_registered:
             register_demo_routes(app, engine)
     except Exception:
         pass
