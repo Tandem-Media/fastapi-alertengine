@@ -16,6 +16,7 @@ For quick-start activation without phone verification,
 see onboarding_api.py.
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -90,6 +91,37 @@ def _send_verification_whatsapp(phone: str, code: str) -> bool:
     except Exception as e:
         logger.error("Failed to send verification to %s: %s", phone, e)
         return False
+
+
+async def _send_welcome_message(tenant: dict, phone: str) -> None:
+    """Send a welcome message via the tenant's configured notification provider."""
+    try:
+        from notifications import dispatch
+
+        message = (
+            "✅ AlertEngine connected successfully.\n\n"
+            f"Service: {tenant.get('service_name', '')}\n"
+            f"Tenant: {tenant.get('tenant_id', '')}\n"
+            f"Health URL: {tenant.get('health_url', '')}\n"
+            f"Notification: {tenant.get('notification_channel', '')}\n\n"
+            "Receiving live telemetry now.\n\n"
+            "You will only be contacted when intervention \n"
+            "may be required.\n\n"
+            "— AlertEngine"
+        )
+
+        welcome_tenant = dict(tenant)
+        channel = tenant.get("notification_channel", "whatsapp")
+        if channel in ("whatsapp", "sent"):
+            welcome_tenant["whatsapp_numbers"] = [phone]
+
+        await dispatch(
+            tenant=welcome_tenant,
+            incident_id=f"welcome-{tenant.get('tenant_id', 'unknown')}",
+            message=message,
+        )
+    except Exception as exc:
+        logger.warning("Welcome message send failed for %s: %s", phone, exc)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -202,6 +234,12 @@ def verify(req: VerifyRequest):
     tenant   = get_tenant(tenant_id)
     contacts = get_contacts(tenant_id)
     pending  = [c["phone"] for c in contacts if not c.get("verified")]
+
+    if not pending and tenant:
+        try:
+            asyncio.create_task(_send_welcome_message(tenant, phone))
+        except Exception as exc:
+            logger.warning("Failed to schedule welcome message for %s: %s", phone, exc)
 
     return {
         "tenant_id":       tenant_id,
