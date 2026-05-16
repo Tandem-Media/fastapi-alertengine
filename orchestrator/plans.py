@@ -3,6 +3,8 @@
 Plan definitions and tenant plan lookup.
 
 Plans (in ascending order):
+  hobby      — entry tier, 1 service, 5 incidents/month, Telegram, no AI decisions
+  developer  — developer tier, 1 service, 10 incidents/month, WhatsApp, AI decisions
   solo       — free tier, 1 service, 50 incidents/month, no DLQ, no voice escalation
   startup    — 5 services, 200 incidents/month, DLQ + voice escalation
   teams      — 20 services, 1000 incidents/month, full feature set
@@ -16,7 +18,7 @@ from typing import Literal, Dict
 from pydantic import BaseModel
 
 
-PlanName = Literal["solo", "startup", "scale", "teams", "enterprise"]
+PlanName = Literal["hobby", "developer", "solo", "startup", "scale", "teams", "enterprise"]
 
 
 class TenantPlan(BaseModel):
@@ -33,6 +35,30 @@ class TenantPlan(BaseModel):
 
 
 PLANS: Dict[str, TenantPlan] = {
+    "hobby": TenantPlan(
+        name="hobby",
+        max_services=1,
+        included_incidents=5,
+        overage_fee_per_incident=0.0,
+        default_provider="telegram",
+        has_dlq_access=False,
+        has_claude_decision=False,
+        has_voice_escalation=False,
+        has_custom_thresholds=False,
+        has_slack=False,
+    ),
+    "developer": TenantPlan(
+        name="developer",
+        max_services=1,
+        included_incidents=10,
+        overage_fee_per_incident=0.0,
+        default_provider="whatsapp",
+        has_dlq_access=False,
+        has_claude_decision=True,
+        has_voice_escalation=False,
+        has_custom_thresholds=False,
+        has_slack=False,
+    ),
     "solo": TenantPlan(
         # Sent.dm recommended for solo tier — zero friction onboarding
         name="solo",
