@@ -95,8 +95,10 @@ def consume_token(token: str, expected_tenant_id: Optional[str] = None) -> tuple
             logger.warning("Replay blocked: %s...", token_hash)
             return False, "Token already used"
     except Exception as e:
-        logger.error("Token store failed: %s — failing open", e)
-        return True, "ok"   # fail-open for resilience
+        logger.error(
+            "Token store failed: %s — failing closed", e
+        )
+        return False, "Token validation unavailable. Try again."
 
 
 def validate_and_consume(
