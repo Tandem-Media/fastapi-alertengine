@@ -259,6 +259,17 @@ async def test_incident(tenant_id: str):
             detail=f"Incident quota exhausted for {plan.name} plan. Upgrade to continue."
         )
 
+    if not plan.has_claude_decision:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "AI diagnosis not available on "
+                          "Hobby plan. Upgrade to Developer "
+                          "or higher.",
+                "code": "PLAN_FEATURE_UNAVAILABLE",
+            }
+        )
+
     # Inject a synthetic critical health payload
     synthetic_health = {
         "health_score": {
