@@ -148,6 +148,41 @@ def status():
         return {"error": str(e)}
 
 
+@health_app.get("/admin/tenants")
+def admin_tenants(admin_key: str):
+    expected_key = os.getenv("ADMIN_KEY")
+    if not expected_key or admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from tenants import list_active_tenants
+
+        tenants = list_active_tenants()
+        sanitized = [
+            {
+                "tenant_id": t.get("tenant_id"),
+                "service_name": t.get("service_name"),
+                "health_url": t.get("health_url"),
+                "status": t.get("status"),
+                "plan": t.get("plan"),
+                "notification_channel": t.get("notification_channel"),
+                "incident_count": t.get("incident_count"),
+                "created_at": t.get("created_at"),
+                "last_updated": t.get("last_updated"),
+            }
+            for t in tenants
+        ]
+        return {
+            "total": len(sanitized),
+            "tenants": sanitized,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("admin_tenants error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @health_app.get("/audit/{incident_id}")
 def audit_log(incident_id: str, tenant_id: str):
     try:
