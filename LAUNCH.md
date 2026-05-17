@@ -36,7 +36,7 @@ is our first live tenant monitored in production.
 Happy to answer questions about the architecture,
 the audit, or the emerging market angle.
 
-Contact: anchorflow@outlook.com
+Contact: anchorflowalertengine@outlook.com
 
 ## X/LinkedIn Post
 FastAPI apps usually tell you they broke after a customer
