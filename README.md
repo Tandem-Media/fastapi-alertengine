@@ -294,4 +294,4 @@ intelligence without telemetry sprawl.
 
 MIT — free package only.
 The orchestrator is a commercial service.
-Contact: anchorflow@outlook.com
+Contact: anchorflowalertengine@outlook.com
