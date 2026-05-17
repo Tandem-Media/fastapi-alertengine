@@ -170,4 +170,4 @@ If you need something outside that scope, use the
 right tool for the job. AlertEngine is designed to
 complement your stack, not replace it.
 
-Questions: anchorflow@outlook.com
+Questions: anchorflowalertengine@outlook.com
