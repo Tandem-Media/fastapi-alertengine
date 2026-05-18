@@ -16,44 +16,29 @@ import os
 import time
 from typing import Callable, Optional
 
+import circuit_breaker as _cb_module
+
 logger = logging.getLogger("orchestrator.notifications")
 
 # ── Circuit breaker ────────────────────────────────────────────────────────────
-
-_CB = {
-    "failures":    0,
-    "disabled_at": 0.0,
-    "threshold":   3,
-    "cooldown_s":  60,
-}
-
+# Uses distributed Redis-backed circuit breaker shared across all workers.
 
 def cb_open() -> bool:
-    if _CB["failures"] >= _CB["threshold"]:
-        if time.time() - _CB["disabled_at"] < _CB["cooldown_s"]:
-            return True
-        # Cooldown expired — reset
-        _CB["failures"]    = 0
-        _CB["disabled_at"] = 0.0
-        logger.info("🔌 Notification circuit breaker reset")
-    return False
+    return _cb_module.is_open("notification", "global")
 
 
 def cb_record(success: bool) -> None:
     if success:
-        _CB["failures"] = 0
+        _cb_module.record_success("notification", "global")
     else:
-        _CB["failures"] += 1
-        if _CB["failures"] >= _CB["threshold"]:
-            _CB["disabled_at"] = time.time()
-            logger.warning("🔌 Circuit breaker OPEN — suppressing for %ds", _CB["cooldown_s"])
+        _cb_module.record_failure("notification", "global")
 
 
 def cb_status() -> dict:
     return {
-        "open":        cb_open(),
-        "failures":    _CB["failures"],
-        "disabled_at": _CB["disabled_at"],
+        "open": cb_open(),
+        "failures": 0,
+        "disabled_at": 0.0,
     }
 
 
@@ -255,8 +240,6 @@ async def dispatch(
 ) -> bool:
     """
     Route and deliver notification via tenant's configured channel.
-    If tenant has slack_webhook_url configured, also send to Slack
-    as a secondary team-visibility channel.
     Records every attempt in the delivery ledger.
     Falls back to webhook if primary fails.
     Never raises.
@@ -275,7 +258,6 @@ async def dispatch(
 
     channel = tenant.get("notification_channel", "whatsapp")
 
-    # Select primary provider
     if channel == "telegram":
         primary = TelegramProvider()
     elif channel == "sent":
@@ -283,26 +265,21 @@ async def dispatch(
     else:
         primary = WhatsAppProvider()
 
-    # Attempt primary
     result = await primary.send(tenant, incident_id, message)
     record_from_result(result)
 
-    # Secondary: Slack team channel (if configured, plan permitting)
     if tenant.get("slack_webhook_url"):
         from plans import get_tenant_plan
         plan = get_tenant_plan(tenant)
         if getattr(plan, "has_slack", False):
             slack = SlackProvider()
-            slack_result = await slack.send(
-                tenant, incident_id, message)
+            slack_result = await slack.send(tenant, incident_id, message)
             record_from_result(slack_result)
 
     if result.success:
         return True
 
-    # Primary failed — attempt webhook fallback
-    logger.warning("Primary failed (%s) — trying webhook fallback",
-                   channel)
+    logger.warning("Primary failed (%s) — trying webhook fallback", channel)
     fallback        = WebhookProvider()
     fallback_result = await fallback.send(tenant, incident_id, message)
     record_from_result(fallback_result)
@@ -325,8 +302,6 @@ async def send_via_channel(
 ) -> bool:
     """
     Route notification to the tenant's configured channel.
-    WhatsApp → existing _send_with_fallback()
-    Telegram → telegram_notifier
     """
     channel = tenant.get("notification_channel", "whatsapp")
 
@@ -337,7 +312,6 @@ async def send_via_channel(
         full_message = f"*{subject}*\n\n{body}"
         return await send_telegram(bot_token, chat_id, full_message)
 
-    # Default: WhatsApp via existing _send_with_fallback
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None, lambda: _send_with_fallback(subject, body)
