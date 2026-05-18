@@ -22,6 +22,18 @@ CB_TTL = 3600  # 1 hour — auto-expire stale breaker state
 CB_THRESHOLD = int(os.getenv("CB_FAILURE_THRESHOLD", "3"))
 CB_COOLDOWN_S = int(os.getenv("CB_COOLDOWN_S", "60"))
 
+# Atomic Lua script for check-and-delete on expired circuit breaker
+RESET_SCRIPT_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local disabled_until = tonumber(redis.call('hget', key, 'disabled_until')) or 0
+if disabled_until > 0 and disabled_until < now then
+    redis.call('del', key)
+    return 1
+end
+return 0
+"""
+
 
 def _redis():
     import redis
@@ -58,19 +70,12 @@ def is_open(provider: str, tenant_id: str = "global") -> bool:
         if time.time() < disabled_until:
             return True
 
-        # Cooldown expired — reset.
-        # Note: this is a non-atomic read-then-delete. Under concurrent workers,
-        # multiple workers may read the same expired disabled_until and all call
-        # r.delete(key) — that is safe because delete is idempotent. There is a
-        # brief window between the delete and the next record_failure where a
-        # fresh failure would start a new key, losing the old count. This is an
-        # accepted tradeoff for a circuit breaker: the alternative (a Lua script
-        # for atomic check-and-delete) adds complexity without meaningful gain,
-        # since the only consequence is a slightly delayed re-open after recovery.
-        r.delete(key)
-        logger.info(
-            "CB reset (cooldown expired): provider=%s tenant=%s", provider, tenant_id
-        )
+        # Cooldown expired — atomic reset via Lua script
+        result = r.eval(RESET_SCRIPT_LUA, 1, key, str(time.time()))
+        if result == 1:
+            logger.info(
+                "CB reset (cooldown expired): provider=%s tenant=%s", provider, tenant_id
+            )
         return False
 
     except Exception as e:
