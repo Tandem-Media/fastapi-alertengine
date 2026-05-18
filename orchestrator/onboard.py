@@ -11,9 +11,6 @@ Endpoints:
     GET  /tenant/{id}          — Get tenant status
     GET  /tenant/{id}/contacts — Get contact verification status
     POST /tenant/{id}/test     — Trigger test incident
-
-For quick-start activation without phone verification,
-see onboarding_api.py.
 """
 
 import asyncio
@@ -147,7 +144,6 @@ def onboard(req: OnboardRequest):
 
     effective_channel = req.notification_channel
 
-    # Normalise numbers to whatsapp: prefix
     numbers = []
     for n in req.whatsapp_numbers:
         if not n.startswith("whatsapp:"):
@@ -171,7 +167,6 @@ def onboard(req: OnboardRequest):
         slack_channel=req.slack_channel,
     )
 
-    # Send WhatsApp verification codes (WhatsApp channel only)
     sent    = []
     failed  = []
     if effective_channel in ("whatsapp", "sent"):
@@ -217,20 +212,16 @@ def verify(req: VerifyRequest):
     if not phone.startswith("whatsapp:"):
         phone = f"whatsapp:{phone}"
 
-    # Find tenant
     tenant_id = find_tenant_by_phone(phone)
     if not tenant_id:
         raise HTTPException(status_code=404, detail="Phone number not found in any tenant")
 
-    # Verify code
     valid = verify_phone(phone, req.code)
     if not valid:
         raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 
-    # Mark verified
     mark_phone_verified(tenant_id, phone)
 
-    # Check tenant status
     tenant   = get_tenant(tenant_id)
     contacts = get_contacts(tenant_id)
     pending  = [c["phone"] for c in contacts if not c.get("verified")]
@@ -290,6 +281,16 @@ async def test_incident(tenant_id: str):
         )
 
     plan  = get_tenant_plan(tenant)
+
+    if not plan.has_claude_decision:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "AI diagnosis not available on Hobby plan. Upgrade to Developer or higher.",
+                "code": "PLAN_FEATURE_UNAVAILABLE",
+            }
+        )
+
     quota = incident_quota_remaining(tenant)
     if quota == 0:
         raise HTTPException(
@@ -297,7 +298,6 @@ async def test_incident(tenant_id: str):
             detail=f"Incident quota exhausted for {plan.name} plan. Upgrade to continue."
         )
 
-    # Inject a synthetic critical health payload
     synthetic_health = {
         "health_score": {
             "score":  20.0,
@@ -318,14 +318,12 @@ async def test_incident(tenant_id: str):
         ],
     }
 
-    # Run through pipeline directly
     from pipeline import open_incident, decide_new_incident, validate_decision_schema
     from memory import save_incident, get_active_incident
     from notifications import fire, send_detection
     from action_generator import generate_recovery_token
     import asyncio
 
-    # Don't overwrite real incident
     existing = get_active_incident(tenant_id=tenant_id)
     if existing and existing.get("tenant_id") == tenant_id:
         raise HTTPException(status_code=409, detail="Active incident already exists for this tenant")
@@ -351,14 +349,11 @@ async def test_incident(tenant_id: str):
         tenant_id=tenant_id,
     )
 
-    # Send to all verified numbers
     verified = get_verified_numbers(tenant_id)
     base_url = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
     token    = generate_recovery_token(incident_id, tenant_id=tenant_id)
     url      = f"{base_url}/action/recover?token={token}"
 
-    from notifications import send_validation
-    import asyncio
     from notifications import dispatch
     asyncio.create_task(dispatch(
         tenant=tenant,
