@@ -55,7 +55,6 @@ def create_tenant(
     tenant_id = str(uuid.uuid4())[:8]
     now       = time.time()
 
-    # Telegram tenants have no phone contacts to verify — activate immediately
     initial_status = "active" if notification_channel == "telegram" else "pending_verification"
 
     tenant = {
@@ -79,6 +78,7 @@ def create_tenant(
         "slack_channel":         slack_channel,
         "incident_count":        0,
         "incidents_this_month":  0,
+        "incidents_reset_at":    now,
         "billing_cycle_start":   now,
         "services_monitored":    [],
     }
@@ -99,10 +99,6 @@ def create_tenant(
     for number in whatsapp_numbers:
         r.set(f"{PHONE_INDEX_PREFIX}{number}", tenant_id)
 
-    # Telegram tenants are active immediately — register in the active set now.
-    # WhatsApp tenants are added to the active set by activate_tenant() after verification.
-    # Note: if SADD fails, list_active_tenants() still finds this tenant via key scan
-    # (status=="active" in the record is authoritative). Log the error but don't fail.
     if notification_channel == "telegram":
         try:
             r.sadd(ACTIVE_SET_KEY, tenant_id)
@@ -154,6 +150,31 @@ def save_contacts(tenant_id: str, contacts: list) -> bool:
         return False
 
 
+def migrate_tenant(data: dict) -> dict:
+    """Migrate tenant record to current schema version."""
+    if "incidents_reset_at" not in data:
+        data["incidents_reset_at"] = data.get(
+            "billing_cycle_start", time.time()
+        )
+    return data
+
+
+def increment_incident_count(tenant: dict) -> dict:
+    """Increment incident count with monthly reset."""
+    last_reset = float(tenant.get("incidents_reset_at", 0))
+    days_since_reset = (time.time() - last_reset) / 86400
+    if days_since_reset >= 30:
+        tenant["incident_count"] = 0
+        tenant["incidents_this_month"] = 0
+        tenant["incidents_reset_at"] = time.time()
+    current = int(tenant.get("incident_count", 0))
+    tenant["incident_count"] = current + 1
+    tenant["incidents_this_month"] = int(
+        tenant.get("incidents_this_month", 0)
+    ) + 1
+    return tenant
+
+
 def list_active_tenants() -> list:
     """Return all tenants with status=active."""
     try:
@@ -190,8 +211,6 @@ def activate_tenant(tenant_id: str) -> bool:
     tenant["last_updated"] = time.time()
     ok = save_tenant(tenant)
     if ok:
-        # Keep ACTIVE_SET_KEY in sync. If SADD fails, list_active_tenants() still
-        # finds this tenant via key scan (status=="active" is authoritative).
         try:
             _redis().sadd(ACTIVE_SET_KEY, tenant_id)
         except Exception as e:
@@ -219,7 +238,7 @@ def deactivate_tenant(tenant_id: str) -> bool:
 
 def generate_verification_code(phone: str) -> str:
     """Generate and store a 6-digit verification code. TTL 5 minutes."""
-    code = str(secrets.randbelow(900000) + 100000)   # 100000-999999
+    code = str(secrets.randbelow(900000) + 100000)
     key  = f"{VERIFY_PREFIX}{phone}"
     try:
         _redis().setex(key, VERIFY_TTL, code)
@@ -261,7 +280,6 @@ def mark_phone_verified(tenant_id: str, phone: str) -> bool:
 
     save_contacts(tenant_id, contacts)
 
-    # Check if all contacts are now verified
     all_verified = all(c.get("verified") for c in contacts)
     if all_verified:
         activate_tenant(tenant_id)
