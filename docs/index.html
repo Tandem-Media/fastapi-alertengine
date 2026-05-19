@@ -44,7 +44,6 @@
       padding: 0 24px;
     }
 
-    /* NAV */
     nav {
       position: sticky;
       top: 0;
@@ -61,27 +60,12 @@
       flex-wrap: wrap;
       gap: 12px;
     }
-    .nav-brand {
-      font-weight: 700;
-      font-size: 1rem;
-      color: var(--text);
-      letter-spacing: -0.3px;
-    }
+    .nav-brand { font-weight: 700; font-size: 1rem; color: var(--text); letter-spacing: -0.3px; }
     .nav-brand span { color: var(--accent); }
-    .nav-links {
-      display: flex;
-      gap: 24px;
-      flex-wrap: wrap;
-    }
-    .nav-links a {
-      color: var(--muted);
-      font-size: 0.875rem;
-      font-weight: 500;
-      transition: color 0.2s;
-    }
+    .nav-links { display: flex; gap: 24px; flex-wrap: wrap; }
+    .nav-links a { color: var(--muted); font-size: 0.875rem; font-weight: 500; transition: color 0.2s; }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
 
-    /* BUTTONS */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -95,28 +79,14 @@
       transition: all 0.2s;
       text-decoration: none;
     }
-    .btn-primary {
-      background: var(--accent);
-      color: #0a0f1a;
-    }
+    .btn-primary { background: var(--accent); color: #0a0f1a; }
     .btn-primary:hover { background: #7ee4ff; text-decoration: none; }
-    .btn-ghost {
-      background: transparent;
-      color: var(--accent);
-      border: 1.5px solid var(--accent);
-    }
+    .btn-ghost { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
     .btn-ghost:hover { background: var(--accent-dim); text-decoration: none; }
-    .btn-success {
-      background: var(--success);
-      color: #0a0f1a;
-    }
+    .btn-success { background: var(--success); color: #0a0f1a; }
     .btn-success:hover { background: #7af8b8; text-decoration: none; }
 
-    /* HERO */
-    .hero {
-      padding: 100px 0 80px;
-      text-align: center;
-    }
+    .hero { padding: 100px 0 80px; text-align: center; }
     .hero-eyebrow {
       display: inline-block;
       background: var(--accent-dim);
@@ -140,10 +110,7 @@
       margin-left: auto;
       margin-right: auto;
     }
-    .hero h1 em {
-      font-style: normal;
-      color: var(--accent);
-    }
+    .hero h1 em { font-style: normal; color: var(--accent); }
     .hero-sub {
       font-size: clamp(1rem, 2.5vw, 1.1875rem);
       color: var(--muted);
@@ -165,415 +132,118 @@
       margin-bottom: 40px;
     }
     .install-cmd span { color: var(--muted); user-select: none; }
-    .hero-btns {
-      display: flex;
-      gap: 14px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
+    .hero-btns { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
 
-    /* PROOF STRIP */
     .proof-strip {
       background: var(--bg2);
       border-top: 1px solid var(--border);
       border-bottom: 1px solid var(--border);
       padding: 32px 0;
     }
-    .proof-strip .container {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 24px;
-      text-align: center;
-    }
-    .proof-item .proof-number {
-      font-size: 1.75rem;
-      font-weight: 800;
-      color: var(--accent);
-      line-height: 1.1;
-    }
-    .proof-item .proof-label {
-      font-size: 0.8125rem;
-      color: var(--muted);
-      margin-top: 4px;
-      font-weight: 500;
-    }
-    .proof-item .proof-sub {
-      font-size: 0.75rem;
-      color: var(--muted);
-      opacity: 0.7;
-    }
+    .proof-strip .container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; text-align: center; }
+    .proof-item .proof-number { font-size: 1.75rem; font-weight: 800; color: var(--accent); line-height: 1.1; }
+    .proof-item .proof-label { font-size: 0.8125rem; color: var(--muted); margin-top: 4px; font-weight: 500; }
+    .proof-item .proof-sub { font-size: 0.75rem; color: var(--muted); opacity: 0.7; }
 
-    /* SECTIONS */
     section { padding: 96px 0; }
-    .section-label {
-      font-size: 0.8125rem;
-      font-weight: 700;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      color: var(--accent);
-      margin-bottom: 14px;
-    }
-    .section-title {
-      font-size: clamp(1.6rem, 3.5vw, 2.25rem);
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      margin-bottom: 16px;
-    }
-    .section-sub {
-      color: var(--muted);
-      font-size: 1.0625rem;
-      max-width: 560px;
-      line-height: 1.7;
-    }
+    .section-label { font-size: 0.8125rem; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); margin-bottom: 14px; }
+    .section-title { font-size: clamp(1.6rem, 3.5vw, 2.25rem); font-weight: 800; letter-spacing: -0.5px; margin-bottom: 16px; }
+    .section-sub { color: var(--muted); font-size: 1.0625rem; max-width: 560px; line-height: 1.7; }
 
-    /* HOW IT WORKS */
     .how-works { background: var(--bg2); }
-    .steps {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 24px;
-      margin-top: 56px;
-    }
-    .step {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 28px 24px;
-      position: relative;
-    }
+    .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 56px; }
+    .step { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 24px; }
     .step-num {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: var(--accent-dim);
-      border: 1.5px solid var(--accent);
-      color: var(--accent);
-      font-size: 0.875rem;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 16px;
+      width: 36px; height: 36px; border-radius: 50%;
+      background: var(--accent-dim); border: 1.5px solid var(--accent);
+      color: var(--accent); font-size: 0.875rem; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
     }
-    .step h3 {
-      font-size: 1.0625rem;
-      font-weight: 700;
-      margin-bottom: 8px;
-    }
-    .step p {
-      font-size: 0.875rem;
-      color: var(--muted);
-      line-height: 1.6;
-    }
+    .step h3 { font-size: 1.0625rem; font-weight: 700; margin-bottom: 8px; }
+    .step p { font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
 
-    /* FREE SDK */
-    .free-sdk .sdk-inner {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 64px;
-      align-items: start;
-      margin-top: 56px;
-    }
-    .sdk-features {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-    .sdk-features li {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      font-size: 0.9375rem;
-      color: var(--muted);
-    }
-    .sdk-features li .check {
-      color: var(--success);
-      font-size: 1rem;
-      flex-shrink: 0;
-      margin-top: 2px;
-    }
+    .free-sdk .sdk-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; margin-top: 56px; }
+    .sdk-features { list-style: none; display: flex; flex-direction: column; gap: 14px; }
+    .sdk-features li { display: flex; align-items: flex-start; gap: 12px; font-size: 0.9375rem; color: var(--muted); }
+    .sdk-features li .check { color: var(--success); font-size: 1rem; flex-shrink: 0; margin-top: 2px; }
     .sdk-features li strong { color: var(--text); }
     .code-block {
-      background: #060b14;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 28px;
-      font-family: 'Courier New', monospace;
-      font-size: 0.8125rem;
-      line-height: 1.8;
-      overflow-x: auto;
+      background: #060b14; border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 28px; font-family: 'Courier New', monospace; font-size: 0.8125rem; line-height: 1.8; overflow-x: auto;
     }
-    .code-block .c { color: #4a6a8a; }
-    .code-block .kw { color: var(--accent); }
-    .code-block .fn { color: var(--success); }
-    .code-block .st { color: #ffb347; }
     .code-free-badge {
-      display: inline-block;
-      background: rgba(87,242,154,0.12);
-      color: var(--success);
-      border: 1px solid rgba(87,242,154,0.3);
-      border-radius: 100px;
-      padding: 4px 12px;
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      margin-bottom: 16px;
+      display: inline-block; background: rgba(87,242,154,0.12); color: var(--success);
+      border: 1px solid rgba(87,242,154,0.3); border-radius: 100px; padding: 4px 12px;
+      font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 16px;
     }
 
-    /* PRICING */
     .pricing { background: var(--bg2); }
-    .pricing-grid {
-      display: grid;
-      grid-template-columns: repeat(5, 1fr);
-      gap: 16px;
-      margin-top: 56px;
+    .pricing-justify {
+      background: rgba(15,25,40,0.8);
+      border: 1px solid rgba(93,216,255,0.12);
+      border-radius: 16px;
+      padding: 32px;
+      margin-bottom: 40px;
+      margin-top: 40px;
     }
-    <div style="background:rgba(15,25,40,0.6);border:1px solid 
-rgba(93,216,255,0.12);border-radius:16px;padding:32px;
-margin-bottom:32px">
+    .pricing-justify h3 { font-size: 1.25rem; font-weight: 800; margin-bottom: 24px; color: var(--text); }
+    .justify-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    .justify-item p:first-child { color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+    .justify-item p:last-child { color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
+    .justify-footer {
+      color: var(--muted); font-size: 0.8125rem; margin-top: 20px;
+      border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px;
+    }
+    .justify-footer strong { color: var(--text); }
 
-<h3 style="font-size:20px;font-weight:800;margin-bottom:24px">
-Why not just build it yourself?</h3>
-
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr;
-gap:20px">
-
-<div>
-<p style="color:#5dd8ff;font-weight:700;margin-bottom:8px">
-Hobby — $19/mo</p>
-<p style="color:#9bb1c6;font-size:14px;line-height:1.6">
-Free uptime tools tell you when your server is dead. 
-They don't tell you when your payment rail is dropping 
-40% of traffic due to API latency. Building a 
-sliding-window P95 tracker that catches business 
-degradation takes days of engineering. At $19/mo 
-you're buying back a week of development time for 
-the price of two pizzas.</p>
-</div>
-
-<div>
-<p style="color:#5dd8ff;font-weight:700;margin-bottom:8px">
-Developer — $99/mo</p>
-<p style="color:#9bb1c6;font-size:14px;line-height:1.6">
-Datadog APM for 3 microservices costs $93/mo and 
-gives you a graph. AlertEngine gives you the graph, 
-the WhatsApp message, the AI diagnosis, and the 
-recovery authorization link. We pay for WhatsApp 
-routing and Claude inference on your behalf.</p>
-</div>
-
-<div>
-<p style="color:#5dd8ff;font-weight:700;margin-bottom:8px">
-Solo+ — $299/mo</p>
-<p style="color:#9bb1c6;font-size:14px;line-height:1.6">
-SOC 2 auditors ask: "Prove an automated script 
-didn't modify production without oversight." 
-AlertEngine shows the exact timestamped human 
-authorization for every recovery action. If this 
-shaves two days off your audit, it has paid for 
-itself for the entire year.</p>
-</div>
-
-</div>
-
-<p style="color:#9bb1c6;font-size:13px;margin-top:20px;
-border-top:1px solid rgba(255,255,255,0.06);padding-top:16px">
-<strong style="color:#f4fbff">Flat-rate, not per-seat.</strong> 
-Traditional incident tools penalize you for growing your team. 
-We charge based on infrastructure scale — not the size of your 
-directory. Every plan includes unlimited team users.
-</p>
-
-</div>
+    .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
     .price-card {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 28px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 28px 20px; display: flex; flex-direction: column; gap: 12px;
     }
-    .price-card.featured {
-      border-color: var(--accent);
-      background: linear-gradient(160deg, rgba(93,216,255,0.06) 0%, var(--bg) 100%);
-    }
-    .price-badge {
-      display: inline-block;
-      background: var(--accent-dim);
-      color: var(--accent);
-      border-radius: 100px;
-      padding: 3px 10px;
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      width: fit-content;
-    }
-    .price-name {
-      font-size: 0.9375rem;
-      font-weight: 700;
-      color: var(--muted);
-    }
-    .price-amount {
-      font-size: 1.75rem;
-      font-weight: 800;
-      color: var(--text);
-      line-height: 1;
-    }
-    .price-amount span {
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: var(--muted);
-    }
-    .price-desc {
-      font-size: 0.8125rem;
-      color: var(--muted);
-      line-height: 1.55;
-      flex: 1;
-    }
+    .price-card.featured { border-color: var(--accent); background: linear-gradient(160deg, rgba(93,216,255,0.06) 0%, var(--bg) 100%); }
+    .price-badge { display: inline-block; background: var(--accent-dim); color: var(--accent); border-radius: 100px; padding: 3px 10px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; width: fit-content; }
+    .price-name { font-size: 0.9375rem; font-weight: 700; color: var(--muted); }
+    .price-amount { font-size: 1.75rem; font-weight: 800; color: var(--text); line-height: 1; }
+    .price-amount span { font-size: 0.875rem; font-weight: 500; color: var(--muted); }
+    .price-desc { font-size: 0.8125rem; color: var(--muted); line-height: 1.55; flex: 1; }
     .price-card .btn { width: 100%; justify-content: center; font-size: 0.8125rem; padding: 10px 16px; }
 
-    /* SAFETY */
-    .safety-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 24px;
-      margin-top: 56px;
-    }
-    .safety-item {
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 28px;
-      display: flex;
-      gap: 18px;
-      align-items: flex-start;
-    }
-    .safety-icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 10px;
-      background: var(--accent-dim);
-      border: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      font-size: 1.25rem;
-    }
-    .safety-item h3 {
-      font-size: 0.9375rem;
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
-    .safety-item p {
-      font-size: 0.875rem;
-      color: var(--muted);
-      line-height: 1.6;
-    }
+    .safety-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 56px; }
+    .safety-item { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; display: flex; gap: 18px; align-items: flex-start; }
+    .safety-icon { width: 44px; height: 44px; border-radius: 10px; background: var(--accent-dim); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.25rem; }
+    .safety-item h3 { font-size: 0.9375rem; font-weight: 700; margin-bottom: 6px; }
+    .safety-item p { font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
 
-    /* ORIGIN */
-    .origin {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-    }
-    .origin-inner {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 64px;
-      align-items: center;
-    }
-    .origin-flag {
-      font-size: 4rem;
-      margin-bottom: 20px;
-      line-height: 1;
-    }
-    .origin-quote {
-      font-size: 1.3125rem;
-      font-weight: 700;
-      line-height: 1.4;
-      margin-bottom: 16px;
-      letter-spacing: -0.3px;
-    }
+    .origin { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .origin-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
+    .origin-flag { font-size: 4rem; margin-bottom: 20px; line-height: 1; }
+    .origin-quote { font-size: 1.3125rem; font-weight: 700; line-height: 1.4; margin-bottom: 16px; letter-spacing: -0.3px; }
     .origin-quote em { font-style: normal; color: var(--accent); }
-    .origin-body {
-      color: var(--muted);
-      font-size: 0.9375rem;
-      line-height: 1.7;
-    }
-    .origin-stat-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-    }
-    .origin-stat {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-    }
-    .origin-stat .stat-val {
-      font-size: 1.5rem;
-      font-weight: 800;
-      color: var(--accent);
-    }
-    .origin-stat .stat-lbl {
-      font-size: 0.8125rem;
-      color: var(--muted);
-      margin-top: 4px;
-    }
+    .origin-body { color: var(--muted); font-size: 0.9375rem; line-height: 1.7; }
+    .origin-stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .origin-stat { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+    .origin-stat .stat-val { font-size: 1.5rem; font-weight: 800; color: var(--accent); }
+    .origin-stat .stat-lbl { font-size: 0.8125rem; color: var(--muted); margin-top: 4px; }
 
-    /* FINAL CTA */
-    .final-cta {
-      text-align: center;
-      padding: 96px 0;
-    }
+    .final-cta { text-align: center; padding: 96px 0; }
     .final-cta .section-title { max-width: 640px; margin: 0 auto 16px; }
     .final-cta .section-sub { margin: 0 auto 36px; }
     .final-cta .install-cmd { margin-bottom: 32px; }
-    .final-cta .hero-btns { margin-top: 8px; }
 
-    /* FOOTER */
-    footer {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      padding: 40px 0;
-    }
-    .footer-inner {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 20px;
-    }
+    footer { background: var(--bg2); border-top: 1px solid var(--border); padding: 40px 0; }
+    .footer-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; }
     .footer-brand { font-weight: 700; font-size: 0.9375rem; }
     .footer-brand span { color: var(--accent); }
-    .footer-links {
-      display: flex;
-      gap: 24px;
-      flex-wrap: wrap;
-    }
-    .footer-links a {
-      color: var(--muted);
-      font-size: 0.875rem;
-      transition: color 0.2s;
-    }
+    .footer-links { display: flex; gap: 24px; flex-wrap: wrap; }
+    .footer-links a { color: var(--muted); font-size: 0.875rem; transition: color 0.2s; }
     .footer-links a:hover { color: var(--text); text-decoration: none; }
-    .footer-copy {
-      color: var(--muted);
-      font-size: 0.8125rem;
-      width: 100%;
-    }
+    .footer-copy { color: var(--muted); font-size: 0.8125rem; width: 100%; }
 
-    /* RESPONSIVE */
     @media (max-width: 900px) {
       .steps { grid-template-columns: repeat(2, 1fr); }
       .pricing-grid { grid-template-columns: repeat(2, 1fr); }
-      .pricing-grid .price-card:last-child { grid-column: span 2; }
+      .justify-grid { grid-template-columns: 1fr; }
       .free-sdk .sdk-inner { grid-template-columns: 1fr; gap: 40px; }
       .origin-inner { grid-template-columns: 1fr; gap: 40px; }
       .proof-strip .container { grid-template-columns: repeat(2, 1fr); }
@@ -581,7 +251,6 @@ directory. Every plan includes unlimited team users.
     @media (max-width: 600px) {
       .steps { grid-template-columns: 1fr; }
       .pricing-grid { grid-template-columns: 1fr; }
-      .pricing-grid .price-card:last-child { grid-column: span 1; }
       .safety-grid { grid-template-columns: 1fr; }
       .proof-strip .container { grid-template-columns: repeat(2, 1fr); }
       .hero { padding: 64px 0 48px; }
@@ -592,7 +261,6 @@ directory. Every plan includes unlimited team users.
 </head>
 <body>
 
-<!-- NAV -->
 <nav>
   <div class="container">
     <div class="nav-brand">FastAPI <span>AlertEngine</span></div>
@@ -605,82 +273,42 @@ directory. Every plan includes unlimited team users.
   </div>
 </nav>
 
-<!-- HERO -->
 <section class="hero">
   <div class="container">
     <div class="hero-eyebrow">Incident Intelligence for FastAPI</div>
-    <h1>Approve production actions<br>before they execute.</h1>
-    <p class="hero-sub">AlertEngine is deterministic by design.<br>AI provides diagnosis. You provide authorization.<br>Nothing executes without your explicit approval.<br>Every action is logged and fully auditable.</p>
-    <div class="install-cmd">
-      <span>$</span> pip install fastapi-alertengine
-    </div>
+    <h1>Approve production actions<br>before they <em>execute.</em></h1>
+    <p class="hero-sub">AlertEngine is deterministic by design. AI provides diagnosis. You provide authorization. Nothing executes without your explicit approval. Every action is logged and fully auditable.</p>
+    <div class="install-cmd"><span>$</span> pip install fastapi-alertengine</div>
     <div class="hero-btns">
-      <a href="https://github.com/Tandem-Media/fastapi-alertengine" target="_blank" rel="noopener" class="btn btn-primary">
-        View on GitHub
-      </a>
+      <a href="https://github.com/Tandem-Media/fastapi-alertengine" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
       <a href="mailto:anchorflowalertengine@outlook.com?subject=Managed%20Pilot%20Request" class="btn btn-ghost">Request Managed Pilot</a>
     </div>
   </div>
 </section>
 
-<!-- PROOF STRIP -->
 <div class="proof-strip">
   <div class="container">
-    <div class="proof-item">
-      <div class="proof-number">232</div>
-      <div class="proof-label">Tests Passing</div>
-      <div class="proof-sub">Full pytest suite</div>
-    </div>
-    <div class="proof-item">
-      <div class="proof-number">10/10</div>
-      <div class="proof-label">Adversarial Audit</div>
-      <div class="proof-sub">All checks passed</div>
-    </div>
-    <div class="proof-item">
-      <div class="proof-number">5s</div>
-      <div class="proof-label">Detection</div>
-      <div class="proof-sub">Alert polling interval</div>
-    </div>
-    <div class="proof-item">
-      <div class="proof-number">Live</div>
-      <div class="proof-label">Production Tenant</div>
-      <div class="proof-sub">HustlerOS, Zimbabwe</div>
-    </div>
+    <div class="proof-item"><div class="proof-number">232</div><div class="proof-label">Tests Passing</div><div class="proof-sub">Full pytest suite</div></div>
+    <div class="proof-item"><div class="proof-number">10/10</div><div class="proof-label">Adversarial Audit</div><div class="proof-sub">All checks passed</div></div>
+    <div class="proof-item"><div class="proof-number">5s</div><div class="proof-label">Detection</div><div class="proof-sub">Alert polling interval</div></div>
+    <div class="proof-item"><div class="proof-number">Live</div><div class="proof-label">Production Tenant</div><div class="proof-sub">HustlerOS, Zimbabwe</div></div>
   </div>
 </div>
 
-<!-- HOW IT WORKS -->
 <section id="how-it-works" class="how-works">
   <div class="container">
     <div class="section-label">How it works</div>
     <h2 class="section-title">Four steps from deploy to approved recovery.</h2>
     <p class="section-sub">No dashboards to configure. No agents to babysit. Just one line of instrumentation and a tap to authorize fixes.</p>
     <div class="steps">
-      <div class="step">
-        <div class="step-num">1</div>
-        <h3>Instrument</h3>
-        <p>Add <code style="color:var(--success);font-size:0.8125rem;">instrument(app)</code> to your FastAPI app. P95 latency, error rate, and health scoring start immediately. Zero config required.</p>
-      </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <h3>Detect</h3>
-        <p>The orchestrator polls <code style="color:var(--success);font-size:0.8125rem;">/health/alerts</code> every 5 seconds. Adaptive thresholds flag anomalies as they emerge — not after customer complaints.</p>
-      </div>
-      <div class="step">
-        <div class="step-num">3</div>
-        <h3>Diagnose</h3>
-        <p>Claude AI analyses the incident context, correlates patterns, and produces a root-cause assessment with a concrete recovery recommendation.</p>
-      </div>
-      <div class="step">
-        <div class="step-num">4</div>
-        <h3>Approve</h3>
-        <p>You receive a WhatsApp or Telegram message with a preview link. Preview the action. Tap to authorize. Nothing executes until you do.</p>
-      </div>
+      <div class="step"><div class="step-num">1</div><h3>Instrument</h3><p>Add <code style="color:var(--success);font-size:0.8125rem;">instrument(app)</code> to your FastAPI app. P95 latency, error rate, and health scoring start immediately. Zero config required.</p></div>
+      <div class="step"><div class="step-num">2</div><h3>Detect</h3><p>The orchestrator polls <code style="color:var(--success);font-size:0.8125rem;">/health/alerts</code> every 5 seconds. Adaptive thresholds flag anomalies as they emerge — not after customer complaints.</p></div>
+      <div class="step"><div class="step-num">3</div><h3>Diagnose</h3><p>Claude AI analyses the incident context, correlates patterns, and produces a root-cause assessment with a concrete recovery recommendation.</p></div>
+      <div class="step"><div class="step-num">4</div><h3>Approve</h3><p>You receive a WhatsApp or Telegram message with a preview link. Preview the action. Tap to authorize. Nothing executes until you do.</p></div>
     </div>
   </div>
 </section>
 
-<!-- FREE SDK -->
 <section id="free-sdk" class="free-sdk">
   <div class="container">
     <div class="section-label">Free SDK</div>
@@ -722,12 +350,31 @@ instrument(app)  # ← that's it
   </div>
 </section>
 
-<!-- PRICING -->
 <section id="pricing" class="pricing">
   <div class="container">
     <div class="section-label">Pricing</div>
     <h2 class="section-title">Simple, honest pricing.</h2>
     <p class="section-sub">The SDK is free forever. Pay only for the managed orchestration layer.</p>
+
+    <div class="pricing-justify">
+      <h3>Why not just build it yourself?</h3>
+      <div class="justify-grid">
+        <div class="justify-item">
+          <p>Hobby — $19/mo</p>
+          <p>Free uptime tools tell you when your server is dead. They don't tell you when your payment rail is dropping 40% of traffic due to API latency. Building a sliding-window P95 tracker that catches business degradation takes days of engineering. At $19/mo you're buying back a week of development time for the price of two pizzas.</p>
+        </div>
+        <div class="justify-item">
+          <p>Developer — $99/mo</p>
+          <p>Datadog APM for 3 microservices costs $93/mo and gives you a graph. AlertEngine gives you the graph, the WhatsApp message, the AI diagnosis, and the recovery authorization link. We pay for WhatsApp routing and Claude inference on your behalf.</p>
+        </div>
+        <div class="justify-item">
+          <p>Solo+ — $299/mo</p>
+          <p>SOC 2 auditors ask: "Prove an automated script didn't modify production without oversight." AlertEngine shows the exact timestamped human authorization for every recovery action. If this shaves two days off your audit, it has paid for itself for the entire year.</p>
+        </div>
+      </div>
+      <p class="justify-footer"><strong>Flat-rate, not per-seat.</strong> Traditional incident tools penalize you for growing your team. We charge based on infrastructure scale — not the size of your directory. Every plan includes unlimited team users.</p>
+    </div>
+
     <div class="pricing-grid">
       <div class="price-card">
         <div class="price-name">Hobby</div>
@@ -738,7 +385,7 @@ instrument(app)  # ← that's it
       <div class="price-card">
         <div class="price-name">Developer</div>
         <div class="price-amount">$99<span>/mo</span></div>
-        <p class="price-desc">Single app. 5-second polling. WhatsApp or Telegram alerts. AI diagnosis. Ideal for side projects going live.</p>
+        <p class="price-desc">Single app. WhatsApp or Telegram. AI diagnosis. Ideal for side projects going live.</p>
         <a href="mailto:anchorflowalertengine@outlook.com?subject=Developer%20Plan" class="btn btn-ghost">Get started</a>
       </div>
       <div class="price-card featured">
@@ -751,60 +398,35 @@ instrument(app)  # ← that's it
       <div class="price-card">
         <div class="price-name">Startup</div>
         <div class="price-amount">$799<span>/mo</span></div>
-        <p class="price-desc">Up to 10 apps. Team approvals. Multi-channel delivery. SLA included. For growing engineering teams.</p>
+        <p class="price-desc">Up to 10 apps. Team approvals. Multi-channel delivery. SLA included.</p>
         <a href="mailto:anchorflowalertengine@outlook.com?subject=Startup%20Plan" class="btn btn-ghost">Get started</a>
       </div>
       <div class="price-card">
         <div class="price-name">Scale</div>
         <div class="price-amount">$1,500<span>/mo</span></div>
-        <p class="price-desc">Unlimited apps. Custom thresholds. Dedicated support. Compliance exports. For scaling infrastructure.</p>
+        <p class="price-desc">Unlimited apps. Custom thresholds. Dedicated support. Compliance exports.</p>
         <a href="mailto:anchorflowalertengine@outlook.com?subject=Scale%20Plan" class="btn btn-ghost">Get started</a>
       </div>
       <div class="price-card">
         <div class="price-name">Enterprise</div>
         <div class="price-amount">Custom</div>
-        <p class="price-desc">On-premise deployment. SSO. Custom SLA. Dedicated account manager. Contact us to discuss your requirements.</p>
+        <p class="price-desc">On-premise. SSO. Custom SLA. Dedicated account manager.</p>
         <a href="mailto:anchorflowalertengine@outlook.com?subject=Enterprise%20Inquiry" class="btn btn-success">Contact us</a>
       </div>
     </div>
   </div>
 </section>
 
-<!-- SAFETY -->
 <section id="safety" class="safety">
   <div class="container">
     <div class="section-label">Safety</div>
     <h2 class="section-title">Human-Authorized. Always.</h2>
     <p class="section-sub">No automated remediation. No background execution. Every recovery action requires explicit human authorization.</p>
     <div class="safety-grid">
-      <div class="safety-item">
-        <div class="safety-icon">🔑</div>
-        <div>
-          <h3>JWT Recovery Tokens</h3>
-          <p>Every recovery action is gated by a tenant-scoped JWT with a 5-minute TTL. Tokens are single-use and validated atomically in Redis — no replay possible.</p>
-        </div>
-      </div>
-      <div class="safety-item">
-        <div class="safety-icon">👁</div>
-        <div>
-          <h3>Preview Before Authorization</h3>
-          <p>GET the recovery link to see exactly what will happen. POST to execute. The preview is read-only and irreversible actions are always a separate, explicit step.</p>
-        </div>
-      </div>
-      <div class="safety-item">
-        <div class="safety-icon">🔒</div>
-        <div>
-          <h3>Cross-Tenant Isolation</h3>
-          <p>All endpoints enforce tenant ownership. An adversarial audit confirmed: attempting to access another tenant's incidents or deliveries returns 403 — always.</p>
-        </div>
-      </div>
-      <div class="safety-item">
-        <div class="safety-icon">📋</div>
-        <div>
-          <h3>Immutable Audit Trail</h3>
-          <p>Every alert, diagnosis, delivery attempt, and recovery authorization is written to an append-only log in Redis with 7-day retention. Nothing happens silently.</p>
-        </div>
-      </div>
+      <div class="safety-item"><div class="safety-icon">🔑</div><div><h3>JWT Recovery Tokens</h3><p>Every recovery action is gated by a tenant-scoped JWT with a 5-minute TTL. Tokens are single-use and validated atomically in Redis — no replay possible.</p></div></div>
+      <div class="safety-item"><div class="safety-icon">👁</div><div><h3>Preview Before Authorization</h3><p>GET the recovery link to see exactly what will happen. POST to execute. The preview is read-only and irreversible actions are always a separate, explicit step.</p></div></div>
+      <div class="safety-item"><div class="safety-icon">🔒</div><div><h3>Cross-Tenant Isolation</h3><p>All endpoints enforce tenant ownership. An adversarial audit confirmed: attempting to access another tenant's incidents returns 403 — always.</p></div></div>
+      <div class="safety-item"><div class="safety-icon">📋</div><div><h3>Immutable Audit Trail</h3><p>Every alert, diagnosis, delivery attempt, and recovery authorization is written to an append-only log with 7-day retention. Nothing happens silently.</p></div></div>
     </div>
   </div>
 </section>
@@ -825,59 +447,37 @@ instrument(app)  # ← that's it
   </div>
 </section>
 
-<!-- ORIGIN -->
 <section class="origin">
   <div class="container">
     <div class="origin-inner">
       <div>
         <div class="origin-flag">🇿🇼</div>
         <p class="origin-quote">Built in <em>Zimbabwe</em> for mobile-first operational reality.</p>
-        <p class="origin-body">
-          A latency spike in Zimbabwe means a customer walks away mid-transaction. We built FastAPI AlertEngine while running HustlerOS — a WhatsApp-native commerce platform — where every failure was visible first on mobile.
-          Mobile-first isn't a design choice here. It's the infrastructure constraint. WhatsApp approvals aren't a novelty — they're the most reliable channel we have. AlertEngine is what we needed ourselves.
-        </p>
+        <p class="origin-body">A latency spike in Zimbabwe means a customer walks away mid-transaction. We built FastAPI AlertEngine while running HustlerOS — a WhatsApp-native commerce platform — where every failure was visible first on mobile. Mobile-first isn't a design choice here. It's the infrastructure constraint.</p>
       </div>
       <div class="origin-stat-grid">
-        <div class="origin-stat">
-          <div class="stat-val">10/10</div>
-          <div class="stat-lbl">Adversarial checks passed including replay attacks and cross-tenant isolation</div>
-        </div>
-        <div class="origin-stat">
-          <div class="stat-val">Live</div>
-          <div class="stat-lbl">HustlerOS monitored in production — real workloads, real tenants</div>
-        </div>
-        <div class="origin-stat">
-          <div class="stat-val">232</div>
-          <div class="stat-lbl">Tests passing across the full SDK and orchestration suite</div>
-        </div>
-        <div class="origin-stat">
-          <div class="stat-val">5s</div>
-          <div class="stat-lbl">End-to-end detection latency from spike to WhatsApp alert</div>
-        </div>
+        <div class="origin-stat"><div class="stat-val">10/10</div><div class="stat-lbl">Adversarial checks passed including replay attacks and cross-tenant isolation</div></div>
+        <div class="origin-stat"><div class="stat-val">Live</div><div class="stat-lbl">HustlerOS monitored in production — real workloads, real tenants</div></div>
+        <div class="origin-stat"><div class="stat-val">232</div><div class="stat-lbl">Tests passing across the full SDK and orchestration suite</div></div>
+        <div class="origin-stat"><div class="stat-val">5s</div><div class="stat-lbl">End-to-end detection latency from spike to WhatsApp alert</div></div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- FINAL CTA -->
 <section class="final-cta">
   <div class="container">
     <div class="section-label">Get started</div>
     <h2 class="section-title">Your API tells you it broke. AlertEngine tells you why — and asks before it acts.</h2>
     <p class="section-sub">The SDK is free and takes one line. The managed layer is ready when you are.</p>
-    <div class="install-cmd">
-      <span>$</span> pip install fastapi-alertengine
-    </div>
+    <div class="install-cmd"><span>$</span> pip install fastapi-alertengine</div>
     <div class="hero-btns">
-      <a href="https://github.com/Tandem-Media/fastapi-alertengine" target="_blank" rel="noopener" class="btn btn-primary">
-        View on GitHub
-      </a>
+      <a href="https://github.com/Tandem-Media/fastapi-alertengine" target="_blank" rel="noopener" class="btn btn-primary">View on GitHub</a>
       <a href="mailto:anchorflowalertengine@outlook.com?subject=Managed%20Pilot%20Request" class="btn btn-ghost">Request Managed Pilot</a>
     </div>
   </div>
 </section>
 
-<!-- FOOTER -->
 <footer>
   <div class="container">
     <div class="footer-inner">
@@ -887,7 +487,7 @@ instrument(app)  # ← that's it
         <a href="https://pypi.org/project/fastapi-alertengine/" target="_blank" rel="noopener">PyPI</a>
         <a href="mailto:anchorflowalertengine@outlook.com">anchorflowalertengine@outlook.com</a>
       </div>
-      <div class="footer-copy">© 2025 Tandem Media. MIT Licensed. Built in Zimbabwe 🇿🇼</div>
+      <div class="footer-copy">© 2026 Tandem Media. MIT Licensed. Built in Zimbabwe 🇿🇼</div>
     </div>
   </div>
 </footer>
