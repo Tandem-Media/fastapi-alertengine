@@ -9,76 +9,27 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
     :root {
-      --bg: #0a0f1a;
-      --bg2: #0e1525;
-      --bg3: #131d30;
-      --accent: #5dd8ff;
-      --accent-dim: rgba(93,216,255,0.12);
-      --success: #57f29a;
-      --text: #f4fbff;
-      --muted: #9bb1c6;
-      --border: rgba(93,216,255,0.18);
-      --radius: 12px;
-      --max: 1100px;
+      --bg: #0a0f1a; --bg2: #0e1525; --bg3: #131d30;
+      --accent: #5dd8ff; --accent-dim: rgba(93,216,255,0.12);
+      --success: #57f29a; --text: #f4fbff; --muted: #9bb1c6;
+      --border: rgba(93,216,255,0.18); --radius: 12px; --max: 1100px;
     }
-
     html { scroll-behavior: smooth; }
-
-    body {
-      background: var(--bg);
-      color: var(--text);
-      font-family: 'Inter', sans-serif;
-      font-size: 16px;
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
-
+    body { background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
+    .container { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
 
-    .container {
-      max-width: var(--max);
-      margin: 0 auto;
-      padding: 0 24px;
-    }
-
-    nav {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: rgba(10,15,26,0.92);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
-      padding: 14px 0;
-    }
-    nav .container {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
+    nav { position: sticky; top: 0; z-index: 100; background: rgba(10,15,26,0.92); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); padding: 14px 0; }
+    nav .container { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
     .nav-brand { font-weight: 700; font-size: 1rem; color: var(--text); letter-spacing: -0.3px; }
     .nav-brand span { color: var(--accent); }
     .nav-links { display: flex; gap: 24px; flex-wrap: wrap; }
     .nav-links a { color: var(--muted); font-size: 0.875rem; font-weight: 500; transition: color 0.2s; }
     .nav-links a:hover { color: var(--text); text-decoration: none; }
 
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 12px 24px;
-      border-radius: 8px;
-      font-size: 0.9375rem;
-      font-weight: 600;
-      cursor: pointer;
-      border: none;
-      transition: all 0.2s;
-      text-decoration: none;
-    }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 24px; border-radius: 8px; font-size: 0.9375rem; font-weight: 600; cursor: pointer; border: none; transition: all 0.2s; text-decoration: none; }
     .btn-primary { background: var(--accent); color: #0a0f1a; }
     .btn-primary:hover { background: #7ee4ff; text-decoration: none; }
     .btn-ghost { background: transparent; color: var(--accent); border: 1.5px solid var(--accent); }
@@ -87,59 +38,15 @@
     .btn-success:hover { background: #7af8b8; text-decoration: none; }
 
     .hero { padding: 100px 0 80px; text-align: center; }
-    .hero-eyebrow {
-      display: inline-block;
-      background: var(--accent-dim);
-      color: var(--accent);
-      border: 1px solid var(--border);
-      border-radius: 100px;
-      padding: 6px 16px;
-      font-size: 0.8125rem;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-      margin-bottom: 28px;
-    }
-    .hero h1 {
-      font-size: clamp(2rem, 5vw, 3.25rem);
-      font-weight: 800;
-      line-height: 1.15;
-      letter-spacing: -1px;
-      margin-bottom: 20px;
-      max-width: 820px;
-      margin-left: auto;
-      margin-right: auto;
-    }
+    .hero-eyebrow { display: inline-block; background: var(--accent-dim); color: var(--accent); border: 1px solid var(--border); border-radius: 100px; padding: 6px 16px; font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 28px; }
+    .hero h1 { font-size: clamp(2rem, 5vw, 3.25rem); font-weight: 800; line-height: 1.15; letter-spacing: -1px; margin-bottom: 20px; max-width: 820px; margin-left: auto; margin-right: auto; }
     .hero h1 em { font-style: normal; color: var(--accent); }
-    .hero-sub {
-      font-size: clamp(1rem, 2.5vw, 1.1875rem);
-      color: var(--muted);
-      max-width: 600px;
-      margin: 0 auto 40px;
-      line-height: 1.7;
-    }
-    .install-cmd {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      background: var(--bg3);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 14px 22px;
-      font-family: 'Courier New', monospace;
-      font-size: 0.9375rem;
-      color: var(--success);
-      margin-bottom: 40px;
-    }
+    .hero-sub { font-size: clamp(1rem, 2.5vw, 1.1875rem); color: var(--muted); max-width: 600px; margin: 0 auto 40px; line-height: 1.7; }
+    .install-cmd { display: inline-flex; align-items: center; gap: 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 10px; padding: 14px 22px; font-family: 'Courier New', monospace; font-size: 0.9375rem; color: var(--success); margin-bottom: 40px; }
     .install-cmd span { color: var(--muted); user-select: none; }
     .hero-btns { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
 
-    .proof-strip {
-      background: var(--bg2);
-      border-top: 1px solid var(--border);
-      border-bottom: 1px solid var(--border);
-      padding: 32px 0;
-    }
+    .proof-strip { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 32px 0; }
     .proof-strip .container { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; text-align: center; }
     .proof-item .proof-number { font-size: 1.75rem; font-weight: 800; color: var(--accent); line-height: 1.1; }
     .proof-item .proof-label { font-size: 0.8125rem; color: var(--muted); margin-top: 4px; font-weight: 500; }
@@ -153,12 +60,7 @@
     .how-works { background: var(--bg2); }
     .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 56px; }
     .step { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 24px; }
-    .step-num {
-      width: 36px; height: 36px; border-radius: 50%;
-      background: var(--accent-dim); border: 1.5px solid var(--accent);
-      color: var(--accent); font-size: 0.875rem; font-weight: 700;
-      display: flex; align-items: center; justify-content: center; margin-bottom: 16px;
-    }
+    .step-num { width: 36px; height: 36px; border-radius: 50%; background: var(--accent-dim); border: 1.5px solid var(--accent); color: var(--accent); font-size: 0.875rem; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
     .step h3 { font-size: 1.0625rem; font-weight: 700; margin-bottom: 8px; }
     .step p { font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
 
@@ -167,40 +69,20 @@
     .sdk-features li { display: flex; align-items: flex-start; gap: 12px; font-size: 0.9375rem; color: var(--muted); }
     .sdk-features li .check { color: var(--success); font-size: 1rem; flex-shrink: 0; margin-top: 2px; }
     .sdk-features li strong { color: var(--text); }
-    .code-block {
-      background: #060b14; border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 28px; font-family: 'Courier New', monospace; font-size: 0.8125rem; line-height: 1.8; overflow-x: auto;
-    }
-    .code-free-badge {
-      display: inline-block; background: rgba(87,242,154,0.12); color: var(--success);
-      border: 1px solid rgba(87,242,154,0.3); border-radius: 100px; padding: 4px 12px;
-      font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 16px;
-    }
+    .code-block { background: #060b14; border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; font-family: 'Courier New', monospace; font-size: 0.8125rem; line-height: 1.8; overflow-x: auto; color: var(--muted); }
+    .code-free-badge { display: inline-block; background: rgba(87,242,154,0.12); color: var(--success); border: 1px solid rgba(87,242,154,0.3); border-radius: 100px; padding: 4px 12px; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 16px; }
 
     .pricing { background: var(--bg2); }
-    .pricing-justify {
-      background: rgba(15,25,40,0.8);
-      border: 1px solid rgba(93,216,255,0.12);
-      border-radius: 16px;
-      padding: 32px;
-      margin-bottom: 40px;
-      margin-top: 40px;
-    }
+    .pricing-justify { background: rgba(15,25,40,0.8); border: 1px solid rgba(93,216,255,0.12); border-radius: 16px; padding: 32px; margin-bottom: 40px; margin-top: 40px; }
     .pricing-justify h3 { font-size: 1.25rem; font-weight: 800; margin-bottom: 24px; color: var(--text); }
     .justify-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
     .justify-item p:first-child { color: var(--accent); font-weight: 700; margin-bottom: 8px; }
     .justify-item p:last-child { color: var(--muted); font-size: 0.875rem; line-height: 1.6; }
-    .justify-footer {
-      color: var(--muted); font-size: 0.8125rem; margin-top: 20px;
-      border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px;
-    }
+    .justify-footer { color: var(--muted); font-size: 0.8125rem; margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px; }
     .justify-footer strong { color: var(--text); }
 
     .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-    .price-card {
-      background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
-      padding: 28px 20px; display: flex; flex-direction: column; gap: 12px;
-    }
+    .price-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 20px; display: flex; flex-direction: column; gap: 12px; }
     .price-card.featured { border-color: var(--accent); background: linear-gradient(160deg, rgba(93,216,255,0.06) 0%, var(--bg) 100%); }
     .price-badge { display: inline-block; background: var(--accent-dim); color: var(--accent); border-radius: 100px; padding: 3px 10px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; width: fit-content; }
     .price-name { font-size: 0.9375rem; font-weight: 700; color: var(--muted); }
@@ -214,6 +96,19 @@
     .safety-icon { width: 44px; height: 44px; border-radius: 10px; background: var(--accent-dim); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 1.25rem; }
     .safety-item h3 { font-size: 0.9375rem; font-weight: 700; margin-bottom: 6px; }
     .safety-item p { font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
+
+    .audit table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    .audit thead tr { border-bottom: 1px solid rgba(93,216,255,0.2); }
+    .audit th { text-align: left; padding: 12px 16px; color: var(--accent); font-weight: 700; }
+    .audit td { padding: 12px 16px; color: var(--muted); border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .audit td.pass { color: var(--success); }
+
+    .channels-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 40px; }
+    .channel-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; }
+    .channel-card .channel-icon { font-size: 1.5rem; margin-bottom: 12px; }
+    .channel-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: 8px; }
+    .channel-card p { font-size: 0.875rem; color: var(--muted); line-height: 1.6; }
+    .channel-card .channel-plan { font-size: 0.75rem; color: var(--accent); margin-top: 8px; }
 
     .origin { background: var(--bg2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
     .origin-inner { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: center; }
@@ -244,6 +139,7 @@
       .steps { grid-template-columns: repeat(2, 1fr); }
       .pricing-grid { grid-template-columns: repeat(2, 1fr); }
       .justify-grid { grid-template-columns: 1fr; }
+      .channels-grid { grid-template-columns: 1fr; }
       .free-sdk .sdk-inner { grid-template-columns: 1fr; gap: 40px; }
       .origin-inner { grid-template-columns: 1fr; gap: 40px; }
       .proof-strip .container { grid-template-columns: repeat(2, 1fr); }
@@ -309,6 +205,31 @@
   </div>
 </section>
 
+<section class="pipeline">
+  <div class="container">
+    <div class="section-label">Architecture</div>
+    <h2 class="section-title">Deterministic by design.</h2>
+    <p class="section-sub">AI is an optional enrichment layer. The critical path — detection, notification, authorization — never depends on it.</p>
+    <div class="code-block" style="margin-top:40px;line-height:2.2;color:var(--muted)">
+<span style="color:var(--accent)">FastAPI Request</span>
+    → Middleware (P95, error rate, anomaly scoring)
+    → Redis Streams (or memory fallback)
+    → Health Score Engine <span style="color:var(--success)">[deterministic]</span>
+    → /health/alerts endpoint
+
+<span style="color:var(--accent)">Orchestrator (every 5s)</span>
+    → Poll /health/alerts
+    → Threshold check <span style="color:var(--success)">[deterministic]</span>
+    → Claude AI diagnosis <span style="color:var(--muted)">[optional enrichment]</span>
+    → WhatsApp / Telegram alert
+    → Human authorization required <span style="color:var(--success)">[always]</span>
+    → JWT validated (atomic Redis SET NX)
+    → Recovery executed
+    → Audit log written (immutable, append-only)
+    </div>
+  </div>
+</section>
+
 <section id="free-sdk" class="free-sdk">
   <div class="container">
     <div class="section-label">Free SDK</div>
@@ -350,12 +271,57 @@ instrument(app)  # ← that's it
   </div>
 </section>
 
+<section class="channels">
+  <div class="container">
+    <div class="section-label">Channels</div>
+    <h2 class="section-title">Alerts where engineers actually are.</h2>
+    <p class="section-sub">No new apps to install. No dashboards to check. Just the channel your team already uses.</p>
+    <div class="channels-grid">
+      <div class="channel-card">
+        <div class="channel-icon">💬</div>
+        <h3>WhatsApp</h3>
+        <p>Via Twilio sandbox or Sent.dm. The most reliable mobile interrupt channel globally. Recovery approvals arrive as tappable links.</p>
+        <div class="channel-plan">Developer plan+</div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-icon">✈️</div>
+        <h3>Telegram</h3>
+        <p>Via Telegram Bot API. Available on all plans including Hobby. No per-message cost — flat rate. Instant delivery globally.</p>
+        <div class="channel-plan">All plans</div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-icon">#</div>
+        <h3>Slack</h3>
+        <p>Webhook-based Slack integration for team notifications. Incidents posted to your channel with recovery link.</p>
+        <div class="channel-plan">Startup plan+</div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-icon">🔗</div>
+        <h3>Webhook</h3>
+        <p>Generic HTTP webhook fallback. Fires when primary channel fails. Integrates with any endpoint — PagerDuty, Teams, custom.</p>
+        <div class="channel-plan">All plans</div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-icon">📞</div>
+        <h3>Voice</h3>
+        <p>Automated voice call escalation via Twilio. Fires after configurable timeout if WhatsApp approval is not received.</p>
+        <div class="channel-plan">Scale plan+</div>
+      </div>
+      <div class="channel-card">
+        <div class="channel-icon">📋</div>
+        <h3>Audit Trail</h3>
+        <p>Every delivery attempt logged immutably. Success, failure, provider, timestamp. Full delivery ledger per incident.</p>
+        <div class="channel-plan">All plans</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="pricing" class="pricing">
   <div class="container">
     <div class="section-label">Pricing</div>
     <h2 class="section-title">Simple, honest pricing.</h2>
     <p class="section-sub">The SDK is free forever. Pay only for the managed orchestration layer.</p>
-
     <div class="pricing-justify">
       <h3>Why not just build it yourself?</h3>
       <div class="justify-grid">
@@ -374,7 +340,6 @@ instrument(app)  # ← that's it
       </div>
       <p class="justify-footer"><strong>Flat-rate, not per-seat.</strong> Traditional incident tools penalize you for growing your team. We charge based on infrastructure scale — not the size of your directory. Every plan includes unlimited team users.</p>
     </div>
-
     <div class="pricing-grid">
       <div class="price-card">
         <div class="price-name">Hobby</div>
@@ -427,6 +392,37 @@ instrument(app)  # ← that's it
       <div class="safety-item"><div class="safety-icon">👁</div><div><h3>Preview Before Authorization</h3><p>GET the recovery link to see exactly what will happen. POST to execute. The preview is read-only and irreversible actions are always a separate, explicit step.</p></div></div>
       <div class="safety-item"><div class="safety-icon">🔒</div><div><h3>Cross-Tenant Isolation</h3><p>All endpoints enforce tenant ownership. An adversarial audit confirmed: attempting to access another tenant's incidents returns 403 — always.</p></div></div>
       <div class="safety-item"><div class="safety-icon">📋</div><div><h3>Immutable Audit Trail</h3><p>Every alert, diagnosis, delivery attempt, and recovery authorization is written to an append-only log with 7-day retention. Nothing happens silently.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="audit">
+  <div class="container">
+    <div class="section-label">Security</div>
+    <h2 class="section-title">Survived a full adversarial audit.</h2>
+    <p class="section-sub">An autonomous AI agent acted as a hostile tenant and attempted to break isolation, replay tokens, and flood the system. 10/10 passed.</p>
+    <div style="margin-top:40px;overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Check</th>
+            <th>Result</th>
+            <th>Detail</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Cross-tenant audit access</td><td class="pass">✓ Blocked</td><td>403 returned</td></tr>
+          <tr><td>Cross-tenant delivery access</td><td class="pass">✓ Blocked</td><td>403 returned</td></tr>
+          <tr><td>Recovery token replay (20 concurrent)</td><td class="pass">✓ Protected</td><td>1 succeeded, 19 rejected</td></tr>
+          <tr><td>Duplicate incident creation (race)</td><td class="pass">✓ Protected</td><td>Exactly 1 created</td></tr>
+          <tr><td>Concurrent token flood</td><td class="pass">✓ Handled</td><td>Atomic Redis SET NX</td></tr>
+          <tr><td>Natural incident detection</td><td class="pass">✓ Confirmed</td><td>End-to-end verified</td></tr>
+          <tr><td>WhatsApp delivery</td><td class="pass">✓ Confirmed</td><td>Live production delivery</td></tr>
+          <tr><td>Recovery authorization audit trail</td><td class="pass">✓ Written</td><td>Immutable append-only log</td></tr>
+          <tr><td>Degraded mode handling</td><td class="pass">✓ Confirmed</td><td>NORMAL/DEGRADED/EMERGENCY</td></tr>
+          <tr><td>Lease renewal under load</td><td class="pass">✓ Atomic</td><td>Lua compare-and-delete</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </section>
