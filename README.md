@@ -42,8 +42,7 @@ Additional endpoints:
 - Adversarial audit by autonomous AI agent: 10/10 passed
   (replay attacks, cross-tenant isolation, concurrent
   token floods)
-- Live production tenant: HustlerOS
-  (WhatsApp commerce platform, Zimbabwe)
+- Live production tenant: fintech platform, Zimbabwe
 - Human-authorized recovery confirmed end-to-end
 
 ---
@@ -274,7 +273,7 @@ pip install fastapi-alertengine
 ```
 
 **Managed orchestrator (Developer — $99/mo):**
-Contact: anchorflow@outlook.com
+Contact: anchorflowalertengine@outlook.com
 
 **Upwork:**
 <a href="https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104">Human-authorized incident recovery for FastAPI</a>
