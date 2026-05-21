@@ -6,7 +6,8 @@ Add one line to your FastAPI app. Detect latency spikes, error surges, and degra
 [![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/Tandem-Media/fastapi-alertengine/actions/workflows/ci.yml/badge.svg)](https://github.com/Tandem-Media/fastapi-alertengine/actions)
-
+https://github.com/Tandem-Media/fastapi-alertengine/edit/main/README.md
+[![RepoRanker](https://reporanker.com/badge/Tandem-Media/fastapi-alertengine)](https://reporanker.com/repos/Tandem-Media/fastapi-alertengine)
 ---
 
 ## Install + Quickstart
