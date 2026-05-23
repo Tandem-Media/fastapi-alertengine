@@ -287,7 +287,6 @@ Built in Zimbabwe where WhatsApp is the operational
 control plane and engineering teams are mobile-first.
 Designed for FastAPI teams everywhere who want incident
 intelligence without telemetry sprawl.
-
 ---
 
 ## License + Contact
