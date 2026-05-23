@@ -6,8 +6,8 @@ Add one line to your FastAPI app. Detect latency spikes, error surges, and degra
 [![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Tests](https://github.com/Tandem-Media/fastapi-alertengine/actions/workflows/ci.yml/badge.svg)](https://github.com/Tandem-Media/fastapi-alertengine/actions)
-https://github.com/Tandem-Media/fastapi-alertengine/edit/main/README.md
 [![RepoRanker](https://reporanker.com/badge/Tandem-Media/fastapi-alertengine)](https://reporanker.com/repos/Tandem-Media/fastapi-alertengine)
+
 ---
 
 ## Install + Quickstart
@@ -102,6 +102,7 @@ Additional endpoints:
 
 ### Pipeline
 
+```
 FastAPI Request
 ↓
 RequestMetricsMiddleware  ← measures latency + status
@@ -111,12 +112,11 @@ Redis Streams             ← append-only event log
 Alert Engine              ← P95 + error rate + anomaly scoring
 ↓
 /health/alerts            ← single status: ok | warning | critical
+```
 
 ---
 
 ## Managed Incident Command — Paid
-
-- **Paid orchestrator =** Managed Incident Command
 
 The orchestrator is the paid layer on top of the free package.
 It polls your health endpoint, runs AI diagnosis via Claude,
@@ -124,14 +124,14 @@ and delivers human-authorized recovery via WhatsApp or Telegram.
 
 ### How an incident works
 
-Your P95 spikes or error rate climbs
-Orchestrator detects it within 5 seconds
-Claude diagnoses root cause in plain English
-You receive WhatsApp/Telegram: what broke, why, suggested fix
-Secure recovery link included (JWT-signed, expires in 5 minutes)
-You tap Approve
-Fix executes (restart, scale, clear cache)
-You receive confirmation when system recovers
+1. Your P95 spikes or error rate climbs
+2. Orchestrator detects it within 5 seconds
+3. Claude diagnoses root cause in plain English
+4. You receive WhatsApp/Telegram: what broke, why, suggested fix
+5. Secure recovery link included (JWT-signed, expires in 5 minutes)
+6. You tap Approve
+7. Fix executes (restart, scale, clear cache)
+8. You receive confirmation when system recovers
 
 Nothing executes without your explicit approval.
 
@@ -230,19 +230,19 @@ Nothing executes without your explicit approval.
 
 ```text
 fastapi_alertengine/     ← Free PyPI package
-middleware.py          ← RequestMetricsMiddleware
-engine.py             ← Core alert engine
-intelligence.py       ← Adaptive thresholds, health scoring
-actions/              ← Recovery suggestions and JWT tokens
-storage.py            ← Redis Streams persistence
+  middleware.py          ← RequestMetricsMiddleware
+  engine.py             ← Core alert engine
+  intelligence.py       ← Adaptive thresholds, health scoring
+  actions/              ← Recovery suggestions and JWT tokens
+  storage.py            ← Redis Streams persistence
 orchestrator/           ← Paid managed service
-loop.py              ← Multi-tenant polling
-pipeline.py          ← Incident state machine
-claude_engine.py     ← AI diagnosis
-notifications.py     ← Multi-channel dispatch
-providers/           ← WhatsApp, Telegram, Slack, Sent.dm, Webhook
-audit.py             ← Immutable forensic log
-plans.py             ← Billing tiers and feature gates
+  loop.py              ← Multi-tenant polling
+  pipeline.py          ← Incident state machine
+  claude_engine.py     ← AI diagnosis
+  notifications.py     ← Multi-channel dispatch
+  providers/           ← WhatsApp, Telegram, Slack, Sent.dm, Webhook
+  audit.py             ← Immutable forensic log
+  plans.py             ← Billing tiers and feature gates
 examples/               ← Demo scripts
 docs/                   ← Agent integration guide
 tests/                  ← 232 tests, Python 3.10/3.11/3.12
@@ -277,7 +277,7 @@ pip install fastapi-alertengine
 Contact: anchorflowalertengine@outlook.com
 
 **Upwork:**
-<a href="https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104">Human-authorized incident recovery for FastAPI</a>
+[Human-authorized incident recovery for FastAPI](https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104)
 
 ---
 
