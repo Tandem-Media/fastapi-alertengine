@@ -28,6 +28,9 @@ dev = [
   "httpx",
   "fakeredis",
   "anyio",
+  "black",
+  "mypy",
+  "freezegun",
 ]
 
 [project.urls]
