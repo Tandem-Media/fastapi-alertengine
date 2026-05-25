@@ -65,7 +65,6 @@ def update_baseline(tenant_id: str, p95: float, err: float) -> dict:
             new = {
                 "p95_ms":       p95,
                 "error_rate":   err,
-                "rpm":          rpm,
                 "sample_count": 1,
                 "updated_at":   time.time(),
             }
@@ -74,7 +73,6 @@ def update_baseline(tenant_id: str, p95: float, err: float) -> dict:
             new = {
                 "p95_ms":       current["p95_ms"] * (1 - a) + p95 * a,
                 "error_rate":   current["error_rate"] * (1 - a) + err * a,
-                "rpm":          current["rpm"] * (1 - a) + rpm * a,
                 "sample_count": current["sample_count"] + 1,
                 "updated_at":   time.time(),
             }
@@ -111,7 +109,6 @@ def baseline_context(tenant_id: str, current_p95: float, current_err: float) -> 
             f"Baseline (last {b['sample_count']} samples):",
             f"  Normal P95: {b['p95_ms']:.0f}ms",
             f"  Normal error rate: {b['error_rate']*100:.1f}%",
-            f"  Normal RPM: {b['rpm']:.0f}",
             f"Current deviation: P95 is {p95_dev:.1f}x baseline, errors {err_dev:.1f}x baseline",
         ]
         return "\n".join(lines)
