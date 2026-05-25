@@ -17,6 +17,7 @@ Deterministic by design. AI is enrichment, not infrastructure.
 SOURCE OF TRUTH FILES
 
   CONSTITUTION.md  — The rules that never change
+  requirements.md  — What the system must do
   design.md        — How the system is built
   tasks.md         — What to build next, in order
   SECURITY.md      — What the system must never do
