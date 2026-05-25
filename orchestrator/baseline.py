@@ -24,9 +24,15 @@ MIN_SAMPLES = int(os.getenv("BASELINE_MIN_SAMPLES", "10"))  # min samples before
 BASELINE_TTL = 86400  # 24 hours
 
 
+# Module-level client — reused across calls (connection pool, thread-safe)
+_redis_client = None
+
 def _redis():
-    url = os.getenv("REDIS_URL", os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"))
-    return redis.Redis.from_url(url, decode_responses=True)
+    global _redis_client
+    if _redis_client is None:
+        url = os.getenv("REDIS_URL", os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"))
+        _redis_client = redis.Redis.from_url(url, decode_responses=True)
+    return _redis_client
 
 
 def get_baseline(tenant_id: str) -> dict:
@@ -41,13 +47,12 @@ def get_baseline(tenant_id: str) -> dict:
     return {
         "p95_ms":       0.0,
         "error_rate":   0.0,
-        "rpm":          0.0,
         "sample_count": 0,
         "updated_at":   0,
     }
 
 
-def update_baseline(tenant_id: str, p95: float, err: float, rpm: float) -> dict:
+def update_baseline(tenant_id: str, p95: float, err: float) -> dict:
     """
     Update EMA baseline with new sample.
     Called on every healthy poll — O(1) Redis GET + SET.

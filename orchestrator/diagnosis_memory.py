@@ -27,9 +27,15 @@ MAX_HISTORY  = 3      # Keep last 3 turns — balances context vs token cost
 HISTORY_TTL  = 86400  # 24 hours — incidents shouldn't last longer
 
 
+# Module-level client — reused across calls (connection pool, thread-safe)
+_redis_client = None
+
 def _redis():
-    url = os.getenv("REDIS_URL", os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"))
-    return redis.Redis.from_url(url, decode_responses=True)
+    global _redis_client
+    if _redis_client is None:
+        url = os.getenv("REDIS_URL", os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"))
+        _redis_client = redis.Redis.from_url(url, decode_responses=True)
+    return _redis_client
 
 
 def record_turn(incident_id: str, decision: dict, health_summary: str) -> None:

@@ -149,8 +149,7 @@ def _update_baseline_safe(tenant_id: str, health: dict) -> None:
         m   = health.get("metrics", {})
         p95 = m.get("overall_p95_ms", 0)
         err = m.get("error_rate", 0)
-        rpm = m.get("requests_per_min", 0)
-        update_baseline(tenant_id, p95, err, rpm)
+        update_baseline(tenant_id, p95, err)
     except Exception as e:
         logger.debug("Baseline update skipped: %s", e)
 

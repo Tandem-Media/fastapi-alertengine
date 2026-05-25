@@ -18,8 +18,27 @@ import httpx
 
 logger = logging.getLogger("orchestrator.claude")
 
+# Module-level imports — fail loud at startup rather than silently during incidents
+try:
+    from baseline import baseline_context as _baseline_context
+    _has_baseline = True
+except Exception as e:
+    logger.warning("Baseline module unavailable: %s", e)
+    _has_baseline = False
+    _baseline_context = lambda *args, **kwargs: ""
+
+try:
+    from diagnosis_memory import build_history_messages as _build_history
+    from diagnosis_memory import record_turn as _record_turn
+    _has_memory = True
+except Exception as e:
+    logger.warning("Diagnosis memory module unavailable: %s", e)
+    _has_memory = False
+    _build_history = lambda *args, **kwargs: []
+    _record_turn = lambda *args, **kwargs: None
+
 MODEL      = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-MAX_TOKENS = 600   # slightly higher to accommodate tool use overhead
+MAX_TOKENS = 800   # slightly higher to accommodate tool use overhead
 RETRIES    = 2     # reduced from 3 — tool use eliminates most parse failures
 API_URL    = "https://api.anthropic.com/v1/messages"
 
@@ -169,10 +188,9 @@ def _build_prompt(
     ]
 
     # Inject baseline context if available
-    if tenant_id:
+    if tenant_id and _has_baseline:
         try:
-            from baseline import baseline_context
-            ctx = baseline_context(
+            ctx = _baseline_context(
                 tenant_id,
                 m.get("overall_p95_ms", 0),
                 m.get("error_rate", 0),
@@ -180,7 +198,7 @@ def _build_prompt(
             if ctx:
                 lines.append(ctx)
         except Exception as e:
-            logger.debug("Baseline context unavailable: %s", e)
+            logger.debug("Baseline context failed: %s", e)
 
     if inc:
         lines += [
@@ -216,14 +234,13 @@ async def get_decision(
 
     if incident:
         incident_id = incident.get("incident_id") or incident.get("id")
-        if incident_id:
+        if incident_id and _has_memory:
             try:
-                from diagnosis_memory import build_history_messages
-                history = build_history_messages(incident_id)
+                history = _build_history(incident_id)
                 if history:
                     messages = history + messages
             except Exception as e:
-                logger.debug("Diagnosis history unavailable: %s", e)
+                logger.debug("Diagnosis history failed: %s", e)
 
     for attempt in range(1, RETRIES + 1):
         try:
@@ -277,9 +294,8 @@ async def get_decision(
             )
 
             # Record turn for multi-turn continuity
-            if incident_id:
+            if incident_id and _has_memory:
                 try:
-                    from diagnosis_memory import record_turn
                     hs = health.get("health_score", {})
                     m  = health.get("metrics", {})
                     summary = (
@@ -287,7 +303,7 @@ async def get_decision(
                         f"p95={m.get('overall_p95_ms', 0):.0f}ms "
                         f"err={m.get('error_rate', 0)*100:.0f}%"
                     )
-                    record_turn(incident_id, decision, summary)
+                    _record_turn(incident_id, decision, summary)
                 except Exception as e:
                     logger.debug("Failed to record diagnosis turn: %s", e)
 
