@@ -1,5 +1,5 @@
 # AlertEngine — Design
-Version: 1.0
+Version: 1.1
 Status: Live in production
 Last updated: May 2026
 
@@ -32,6 +32,8 @@ AlertEngine Orchestrator (Railway)
 ├── pipeline.py                        ← incident state machine
 ├── policy.py                          ← deterministic threshold evaluation
 ├── claude_engine.py                   ← AI diagnosis (optional enrichment)
+├── baseline.py                        ← per-tenant EMA baseline memory
+├── diagnosis_memory.py                ← multi-turn diagnosis history
 ├── notifications.py                   ← multi-channel dispatch
 ├── providers/                         ← WhatsApp, Telegram, Slack, Webhook
 ├── action_generator.py                ← JWT recovery token creation
@@ -56,12 +58,14 @@ FastAPI Request
 
 Orchestrator loop (every 5s)
   → GET /health/alerts
+  → baseline.py (update EMA on healthy polls)
   → policy.py (deterministic threshold check)
   → [if incident] pipeline.py opens incident
-  → claude_engine.py (AI diagnosis, confidence gated)
+  → claude_engine.py (AI diagnosis with baseline context + diagnosis history)
   → notifications.py (WhatsApp/Telegram message)
   → action_generator.py (JWT recovery token)
   → audit.py (DETECTED event logged)
+  → diagnosis_memory.py (record Claude turn for continuity)
 ```
 
 ### Recovery flow
@@ -74,6 +78,7 @@ Engineer receives WhatsApp message
   → action_generator.py validates JWT (atomic Redis SET NX)
   → recovery executes
   → audit.py (AUTHORIZED + EXECUTED events logged)
+  → diagnosis_memory.py (history cleared on resolve)
   → engineer receives confirmation message
 ```
 
@@ -121,13 +126,35 @@ Alternative paths:
 - Returns: escalate | monitor | resolve
 - This is the critical path — AI is never on the critical path
 
+### Orchestrator: baseline.py
+- Per-tenant Exponential Moving Average (EMA) baseline
+- Stores: normal P95, error rate, RPM per tenant
+- Redis key per tenant, 24h TTL, O(1) GET + SET per loop tick
+- Alpha = 0.3 — adapts to traffic pattern shifts within ~10 samples
+- Minimum 10 samples before reporting (avoids cold-start noise)
+- Used by claude_engine.py to provide deviation context:
+  "P95 is 43x your normal baseline of 120ms"
+- Updated on every healthy poll, skipped during incidents
+
+### Orchestrator: diagnosis_memory.py
+- Per-incident multi-turn diagnosis history
+- Stores last 3 Claude decisions per incident in Redis
+- Injected into Claude message list as alternating assistant/user turns
+- Prevents diagnosis flip-flopping across polling cycles
+- Cleared automatically when incident resolves
+- 24h TTL — incidents shouldn't last longer
+- ~240-360 extra input tokens per call at MAX_HISTORY=3
+
 ### Orchestrator: claude_engine.py
-- Receives: health metrics + incident context
-- Returns: diagnosis string + confidence score (0.0 to 1.0)
-- Confidence < 0.6 → diagnosis suppressed, raw metrics only
-- Claude Haiku for text classification
+- Receives: health metrics + baseline context + diagnosis history
+- Uses native Anthropic tool use — schema-validated output guaranteed
+- No JSON parsing, no markdown stripping, no retry for parse failures
+- Two few-shot examples in system prompt — reduces Haiku format violations
+- Confidence gating: < 0.6 → diagnosis suppressed, raw metrics only
+- Claude Haiku for fast text decisions
 - Claude Sonnet for vision and complex diagnosis
 - Never blocks incident creation or notification
+- Returns structured decision: action + reason + confidence + whatsapp_message
 
 ### Orchestrator: action_generator.py
 - Creates JWT tokens: tenant_id + incident_id + action + exp
@@ -203,6 +230,21 @@ tenant = {
 
 ---
 
+## Redis Key Space
+
+| Key Pattern | Content | TTL |
+|-------------|---------|-----|
+| `orchestrator:baseline:{tenant_id}` | EMA baseline dict | 24h |
+| `orchestrator:diagnosis_history:{incident_id}` | Last 3 Claude turns | 24h |
+| `orchestrator:active_incident:{tenant_id}` | Active incident ID | 24h |
+| `orchestrator:incident:{incident_id}` | Incident record | 24h |
+| `orchestrator:audit:{incident_id}` | Audit log list | 7d |
+| `orchestrator:cb:{provider}:{tenant_id}` | Circuit breaker state | 1h |
+| `orchestrator:active_tenants` | Set of active tenant IDs | permanent |
+| `tenant:{tenant_id}` | Tenant record | permanent |
+
+---
+
 ## Plan Feature Gates
 
 | Feature | Hobby | Developer | Solo | Startup | Scale | Enterprise |
@@ -212,6 +254,8 @@ tenant = {
 | WhatsApp | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Telegram | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | AI diagnosis | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Baseline memory | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Diagnosis memory | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Slack | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ |
 | Voice escalation | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ |
 | DLQ access | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
@@ -227,6 +271,8 @@ tenant = {
 | ALERTENGINE_BASE_URL | Yes | Public orchestrator URL |
 | ANTHROPIC_API_KEY | Yes | Claude AI API key |
 | ALERT_SECRET | Yes | JWT signing secret (min 32 chars) |
+| BASELINE_EMA_ALPHA | No | EMA weight for new samples (default: 0.3) |
+| BASELINE_MIN_SAMPLES | No | Min samples before baseline reporting (default: 10) |
 | TWILIO_ACCOUNT_SID | Twilio only | Twilio account SID |
 | TWILIO_AUTH_TOKEN | Twilio only | Twilio auth token |
 | TWILIO_WHATSAPP_FROM | Twilio only | Sender WhatsApp number |
@@ -251,7 +297,9 @@ orchestrator/           ← Paid managed service (commercial)
   loop.py              ← Multi-tenant polling
   pipeline.py          ← Incident state machine
   policy.py            ← Deterministic threshold evaluation
-  claude_engine.py     ← AI diagnosis (optional enrichment)
+  claude_engine.py     ← AI diagnosis (tool use, few-shot, hardened)
+  baseline.py          ← Per-tenant EMA baseline memory
+  diagnosis_memory.py  ← Multi-turn diagnosis history
   notifications.py     ← Multi-channel dispatch
   providers/           ← WhatsApp, Telegram, Slack, Sent.dm, Webhook
   action_generator.py  ← JWT recovery token creation
@@ -292,4 +340,5 @@ examples/               ← Demo scripts
 - The GET/POST split for recovery (preview vs execute)
 - The confidence gating threshold (0.6)
 - The token TTL (300 seconds)
-
+- The EMA alpha default (0.3) — changing affects all tenant baselines
+- The diagnosis history MAX_HISTORY (3) — changing affects token costs

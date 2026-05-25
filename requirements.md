@@ -179,3 +179,58 @@ and records everything immutably.
 **REQ-010-B**: The system SHALL support fintech use cases.
 - Acceptance: Deployed and tested on live fintech infrastructure in Zimbabwe
 
+
+---
+
+## REQ-011: Baseline Memory
+
+**REQ-011-A**: The orchestrator SHALL maintain a per-tenant EMA baseline of normal P95, error rate, and RPM.
+- Acceptance: baseline.py stores and updates one Redis key per tenant with 24h TTL
+
+**REQ-011-B**: The baseline SHALL update on every healthy poll.
+- Acceptance: loop.py calls update_baseline() when health status is "healthy"
+
+**REQ-011-C**: The baseline SHALL NOT report until minimum 10 samples are collected.
+- Acceptance: baseline_context() returns empty string if sample_count < MIN_SAMPLES
+
+**REQ-011-D**: Claude diagnosis SHALL include baseline deviation context when available.
+- Acceptance: claude_engine.py injects baseline_context() into the prompt
+
+**REQ-011-E**: Baseline context SHALL express deviation as a multiplier.
+- Acceptance: Prompt includes "P95 is Nx baseline" not just raw ms value
+
+---
+
+## REQ-012: Diagnosis Memory
+
+**REQ-012-A**: The orchestrator SHALL maintain multi-turn diagnosis history per incident.
+- Acceptance: diagnosis_memory.py stores last 3 Claude decisions per incident
+
+**REQ-012-B**: Diagnosis history SHALL be injected into Claude's message list.
+- Acceptance: claude_engine.py prepends history messages before current prompt
+
+**REQ-012-C**: Diagnosis history SHALL be cleared when an incident resolves.
+- Acceptance: loop.py calls clear_history() on RECOVERED transition
+
+**REQ-012-D**: Diagnosis history SHALL NOT exceed 3 turns.
+- Acceptance: Redis ltrim caps list at MAX_HISTORY=3
+
+**REQ-012-E**: Diagnosis history failure SHALL NOT block incident processing.
+- Acceptance: All diagnosis_memory calls are wrapped in try/except
+
+---
+
+## REQ-013: Claude Tool Use
+
+**REQ-013-A**: Claude SHALL use native tool use for structured output.
+- Acceptance: claude_engine.py passes TOOLS and tool_choice to the API
+
+**REQ-013-B**: Tool use SHALL eliminate JSON parsing and markdown stripping.
+- Acceptance: No json.loads() or strip("```json") in the response path
+
+**REQ-013-C**: The tool schema SHALL enforce required fields.
+- Acceptance: action, reason, confidence, whatsapp_message are all required
+
+**REQ-013-D**: The system prompt SHALL include two few-shot examples.
+- Acceptance: DECISION_PROMPT contains a critical incident example and a recovery example
+
