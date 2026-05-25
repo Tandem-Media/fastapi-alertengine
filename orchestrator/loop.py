@@ -7,11 +7,12 @@ Per loop tick:
 2. For each tenant:
    a. Acquire distributed lock
    b. Fetch health from tenant's health_url
-   c. Load tenant incident from Redis
-   d. Call Claude for decision
-   e. Execute actions via pipeline
-   f. Notify tenant contacts
-   g. Release lock
+   c. Update per-tenant baseline (EMA) on healthy fetches
+   d. Load tenant incident from Redis
+   e. Call Claude for decision (with baseline + diagnosis memory)
+   f. Execute actions via pipeline
+   g. Notify tenant contacts
+   h. Release lock
 
 No decision logic here. No global state. No blocking.
 """
@@ -134,6 +135,24 @@ def _clear_tenant_active(tenant_id: str) -> None:
         r.delete(f"orchestrator:active_incident:{tenant_id}")
     except Exception as e:
         logger.error("_clear_tenant_active failed: %s", e)
+
+
+# ── Baseline update ────────────────────────────────────────────────────────────
+
+def _update_baseline_safe(tenant_id: str, health: dict) -> None:
+    """
+    Update per-tenant EMA baseline on every healthy poll.
+    Silently skips if baseline module unavailable.
+    """
+    try:
+        from baseline import update_baseline
+        m   = health.get("metrics", {})
+        p95 = m.get("overall_p95_ms", 0)
+        err = m.get("error_rate", 0)
+        rpm = m.get("requests_per_min", 0)
+        update_baseline(tenant_id, p95, err, rpm)
+    except Exception as e:
+        logger.debug("Baseline update skipped: %s", e)
 
 
 # ── Notification dispatcher (tenant-aware) ────────────────────────────────────
@@ -320,6 +339,10 @@ async def _process_tenant(tenant: dict) -> None:
     logger.info("[%s] Health: %s | score=%.0f | mode=%s",
                 tenant_id, status, score, mode)
 
+    # ── Update baseline on healthy polls ──────────────────────────────────────
+    if status == "healthy":
+        _update_baseline_safe(tenant_id, health)
+
     incident = _get_tenant_incident(tenant_id)
 
     # ── New critical incident ──────────────────────────────────────────────────
@@ -381,7 +404,8 @@ async def _process_tenant(tenant: dict) -> None:
                     "Lease lost before Claude call | %s", tenant_id)
                 return
 
-            claude = await claude_decide(health, incident=None)
+            claude = await claude_decide(
+                health, incident=None, tenant_id=tenant_id)
             if claude["action"] not in ("escalate", "validate"):
                 return
 
@@ -433,7 +457,8 @@ async def _process_tenant(tenant: dict) -> None:
         # Recovery
         if status in ("healthy", "degraded") and \
                 incident.get("stage") != "RECOVERED":
-            claude   = await claude_decide(health, incident=incident)
+            claude   = await claude_decide(
+                health, incident=incident, tenant_id=tenant_id)
             decision = decide(incident, health, claude)
             valid, reason = validate_decision_schema(decision)
             if not valid:
@@ -446,6 +471,14 @@ async def _process_tenant(tenant: dict) -> None:
                 save_incident(updated)
                 resolve_incident(incident_id)
                 _clear_tenant_active(tenant_id)
+
+                # Clear diagnosis memory on resolve
+                try:
+                    from diagnosis_memory import clear_history
+                    clear_history(incident_id)
+                except Exception as e:
+                    logger.debug("clear_history skipped: %s", e)
+
                 append_event(
                     incident_id=incident_id, stage="RECOVERED",
                     decision=claude["action"], reason=decision["reason"],
@@ -457,7 +490,8 @@ async def _process_tenant(tenant: dict) -> None:
             return
 
         # Pipeline advance
-        claude   = await claude_decide(health, incident=incident)
+        claude   = await claude_decide(
+            health, incident=incident, tenant_id=tenant_id)
         decision = decide(incident, health, claude)
         valid, reason = validate_decision_schema(decision)
         if not valid:
