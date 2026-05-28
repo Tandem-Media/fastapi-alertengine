@@ -37,6 +37,14 @@ except Exception as e:
     _build_history = lambda *args, **kwargs: []
     _record_turn = lambda *args, **kwargs: None
 
+try:
+    from commit_context import commit_context as _commit_context
+    _has_commits = True
+except Exception as e:
+    logger.warning("Commit context module unavailable: %s", e)
+    _has_commits = False
+    _commit_context = lambda *args, **kwargs: ""
+
 MODEL      = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 MAX_TOKENS = 800   # slightly higher to accommodate tool use overhead
 RETRIES    = 2     # reduced from 3 — tool use eliminates most parse failures

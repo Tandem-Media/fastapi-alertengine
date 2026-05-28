@@ -66,7 +66,7 @@ def _check_redis() -> tuple[bool, str]:
 
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 import uvicorn
 
 
@@ -339,6 +339,134 @@ async def recover_action_confirm(token: str):
         }
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+# ── Diff-in-Pocket: Git commit webhook ────────────────────────────────────────
+
+@health_app.post("/commits/webhook", include_in_schema=True, tags=["commits"])
+async def github_webhook(request: Request):
+    """
+    Receive GitHub push webhook events and store commit context.
+
+    Setup in GitHub:
+      Repository → Settings → Webhooks → Add webhook
+      Payload URL: https://your-orchestrator/commits/webhook
+      Content type: application/json
+      Events: Just the push event
+
+    The commit SHA and message will be correlated with incidents
+    that occur within 10 minutes of the push.
+    """
+    try:
+        from commit_context import store_commit
+        import time
+
+        body = await request.json()
+
+        # GitHub push event format
+        repo   = body.get("repository", {}).get("full_name", "")
+        branch = body.get("ref", "").replace("refs/heads/", "")
+        tenant_id = request.headers.get("X-AlertEngine-Tenant-ID", "")
+
+        if not tenant_id:
+            # Try to match by repo URL if tenant has it configured
+            tenant_id = body.get("repository", {}).get("name", "unknown")
+
+        commits_stored = 0
+        for commit in body.get("commits", []):
+            sha     = commit.get("id", "")
+            message = commit.get("message", "").split("\n")[0]
+            author  = commit.get("author", {}).get("name", "unknown")
+            ts_str  = commit.get("timestamp", "")
+
+            try:
+                import datetime
+                dt = datetime.datetime.fromisoformat(
+                    ts_str.replace("Z", "+00:00"))
+                timestamp = dt.timestamp()
+            except Exception:
+                timestamp = time.time()
+
+            files_changed = (
+                commit.get("added", []) +
+                commit.get("modified", []) +
+                commit.get("removed", [])
+            )
+
+            store_commit(
+                tenant_id=tenant_id,
+                sha=sha,
+                message=message,
+                author=author,
+                timestamp=timestamp,
+                files_changed=files_changed,
+                repo=repo,
+                branch=branch,
+            )
+            commits_stored += 1
+
+        return {
+            "stored":    commits_stored,
+            "tenant_id": tenant_id,
+            "repo":      repo,
+            "branch":    branch,
+        }
+
+    except Exception as e:
+        logger.error("Commit webhook error: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@health_app.post("/commits/{tenant_id}", include_in_schema=True, tags=["commits"])
+async def store_commit_manual(tenant_id: str, request: Request):
+    """
+    Manually push a commit to AlertEngine for correlation.
+    Use this if you prefer not to set up a GitHub webhook.
+
+    Body:
+        {
+            "sha": "a1b2c3d",
+            "message": "Fix checkout query isolation level",
+            "author": "John",
+            "timestamp": 1716900000.0,
+            "files_changed": ["models/order.py", "queries/checkout.sql"],
+            "additions": 12,
+            "deletions": 3
+        }
+    """
+    try:
+        from commit_context import store_commit
+        import time
+
+        body = await request.json()
+        store_commit(
+            tenant_id=tenant_id,
+            sha=body.get("sha", ""),
+            message=body.get("message", ""),
+            author=body.get("author", "unknown"),
+            timestamp=body.get("timestamp", time.time()),
+            files_changed=body.get("files_changed", []),
+            additions=body.get("additions", 0),
+            deletions=body.get("deletions", 0),
+            repo=body.get("repo", ""),
+            branch=body.get("branch", "main"),
+        )
+        return {"stored": True, "tenant_id": tenant_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@health_app.get("/commits/{tenant_id}", include_in_schema=True, tags=["commits"])
+async def get_commits(tenant_id: str, limit: int = 10):
+    """List recent stored commits for a tenant."""
+    try:
+        from commit_context import get_recent_commits
+        import time
+        commits = get_recent_commits(tenant_id, time.time(), limit=limit)
+        return {"tenant_id": tenant_id, "commits": commits, "count": len(commits)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
