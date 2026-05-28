@@ -1,318 +1,380 @@
-# orchestrator/notifications.py
+# orchestrator/onboard.py
 """
-Notification system with circuit breaker and fallback channel.
+Standard onboarding flow with phone verification.
 
-Rules:
-- All sending is async-safe (executor-wrapped)
-- Circuit breaker: 3 failures → 60s cooldown
-- Fallback webhook fires when primary (WhatsApp) fails
-- Never blocks the orchestrator loop
-- Never raises — logs and continues
+Use this for production tenants who need WhatsApp/Telegram
+phone verification before activation.
+
+Endpoints:
+    POST /onboard   — Register tenant, send verification codes
+    POST /verify    — Verify phone number, activate tenant
+    GET  /tenant/{id}          — Get tenant status
+    GET  /tenant/{id}/contacts — Get contact verification status
+    POST /tenant/{id}/test     — Trigger test incident
 """
 
 import asyncio
 import logging
 import os
 import time
-from typing import Callable, Optional
+from typing import Optional
 
-import circuit_breaker as _cb_module
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-logger = logging.getLogger("orchestrator.notifications")
+from tenants import (
+    create_tenant,
+    get_tenant,
+    get_contacts,
+    get_verified_numbers,
+    generate_verification_code,
+    verify_phone,
+    mark_phone_verified,
+    find_tenant_by_phone,
+)
+from plans import get_plan, get_tenant_plan, incident_quota_remaining
 
-# ── Circuit breaker ────────────────────────────────────────────────────────────
-# Uses distributed Redis-backed circuit breaker shared across all workers.
+logger = logging.getLogger("orchestrator.onboard")
 
-def cb_open() -> bool:
-    return _cb_module.is_open("notification", "global")
+router = APIRouter()
+
+TWILIO_FROM = os.getenv("TWILIO_WHATSAPP_FROM", "")
 
 
-def cb_record(success: bool) -> None:
-    if success:
-        _cb_module.record_success("notification", "global")
+# ── Request models ─────────────────────────────────────────────────────────────
+
+class OnboardRequest(BaseModel):
+    service_name:           str
+    health_url:             str
+    whatsapp_numbers:       list[str] = []
+    notification_channel:   str = "whatsapp"
+    plan:                   str = "solo"
+    telegram_bot_token:     Optional[str] = None
+    telegram_chat_id:       Optional[str] = None
+    twilio_account_sid:     Optional[str] = None
+    twilio_auth_token:      Optional[str] = None
+    twilio_whatsapp_from:   Optional[str] = None
+    sent_api_key:           Optional[str] = None
+    sent_phone_id:          Optional[str] = None
+    slack_webhook_url:      Optional[str] = None
+    slack_channel:          Optional[str] = None
+    recovery_webhook_url:   Optional[str] = None  # URL called after engineer taps Approve
+
+
+class VerifyRequest(BaseModel):
+    phone: str
+    code:  str
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _send_verification_whatsapp(phone: str, code: str) -> bool:
+    """Send verification code via WhatsApp."""
+    try:
+        from twilio.rest import Client
+        sid   = os.getenv("TWILIO_ACCOUNT_SID")
+        token = os.getenv("TWILIO_AUTH_TOKEN")
+        if not sid or not token or not TWILIO_FROM:
+            logger.warning("Twilio not configured — skipping WhatsApp verification send")
+            return False
+        body = (
+            f"⚡ AlertEngine verification\n\n"
+            f"Your code: *{code}*\n\n"
+            f"Expires in 5 minutes."
+        )
+        client = Client(sid, token)
+        msg    = client.messages.create(body=body, from_=TWILIO_FROM, to=phone)
+        logger.info("Verification sent to %s: %s", phone, msg.sid)
+        return True
+    except Exception as e:
+        logger.error("Failed to send verification to %s: %s", phone, e)
+        return False
+
+
+async def _send_welcome_message(tenant: dict, phone: str) -> None:
+    """Send a welcome message via the tenant's configured notification provider."""
+    try:
+        from notifications import dispatch
+
+        message = (
+            "✅ AlertEngine connected successfully.\n\n"
+            f"Service: {tenant.get('service_name', '')}\n"
+            f"Tenant: {tenant.get('tenant_id', '')}\n"
+            f"Health URL: {tenant.get('health_url', '')}\n"
+            f"Notification: {tenant.get('notification_channel', '')}\n\n"
+            "Receiving live telemetry now.\n\n"
+            "You will only be contacted when intervention \n"
+            "may be required.\n\n"
+            "— AlertEngine"
+        )
+
+        welcome_tenant = dict(tenant)
+        channel = tenant.get("notification_channel", "whatsapp")
+        if channel in ("whatsapp", "sent"):
+            welcome_tenant["whatsapp_numbers"] = [phone]
+
+        await dispatch(
+            tenant=welcome_tenant,
+            incident_id=f"welcome-{tenant.get('tenant_id', 'unknown')}",
+            message=message,
+        )
+    except Exception as exc:
+        logger.warning("Welcome message send failed for %s: %s", phone, exc)
+
+
+# ── Endpoints ──────────────────────────────────────────────────────────────────
+
+@router.post("/onboard")
+def onboard(req: OnboardRequest):
+    """
+    Register a new tenant.
+    Sends verification codes to all WhatsApp numbers.
+    """
+    if req.notification_channel in ("whatsapp", "sent") and not req.whatsapp_numbers:
+        raise HTTPException(status_code=400, detail="At least one WhatsApp number required")
+
+    if not req.health_url.startswith("http"):
+        raise HTTPException(status_code=400, detail="health_url must be a valid URL")
+
+    if req.notification_channel == "telegram":
+        if not req.telegram_bot_token or not req.telegram_chat_id:
+            raise HTTPException(
+                status_code=400,
+                detail="telegram_bot_token and telegram_chat_id are required for Telegram channel",
+            )
+
+    effective_channel = req.notification_channel
+
+    numbers = []
+    for n in req.whatsapp_numbers:
+        if not n.startswith("whatsapp:"):
+            n = f"whatsapp:{n}"
+        numbers.append(n)
+
+    tenant = create_tenant(
+        service_name=req.service_name,
+        health_url=req.health_url,
+        whatsapp_numbers=numbers,
+        plan=req.plan,
+        notification_channel=effective_channel,
+        telegram_bot_token=req.telegram_bot_token,
+        telegram_chat_id=req.telegram_chat_id,
+        twilio_account_sid=req.twilio_account_sid,
+        twilio_auth_token=req.twilio_auth_token,
+        twilio_whatsapp_from=req.twilio_whatsapp_from,
+        sent_api_key=req.sent_api_key,
+        sent_phone_id=req.sent_phone_id,
+        slack_webhook_url=req.slack_webhook_url,
+        slack_channel=req.slack_channel,
+        recovery_webhook_url=req.recovery_webhook_url,
+    )
+
+    sent    = []
+    failed  = []
+    if effective_channel in ("whatsapp", "sent"):
+        for number in numbers:
+            code = generate_verification_code(number)
+            ok   = _send_verification_whatsapp(number, code)
+            if ok:
+                sent.append(number)
+            else:
+                failed.append(number)
+                logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
+
+    if req.sent_api_key or effective_channel == "sent":
+        notification_config = "sent"
+    elif req.twilio_account_sid:
+        notification_config = "custom_twilio"
     else:
-        _cb_module.record_failure("notification", "global")
+        notification_config = "shared"
 
-
-def cb_status() -> dict:
     return {
-        "open": cb_open(),
-        "failures": 0,
-        "disabled_at": 0.0,
+        "tenant_id":             tenant["tenant_id"],
+        "service_name":          tenant["service_name"],
+        "notification_channel":  effective_channel,
+        "status":                tenant["status"],
+        "plan":                  req.plan,
+        "contacts_pending":      len(numbers),
+        "verification_sent":     sent,
+        "verification_failed":   failed,
+        "notification_config":   notification_config,
+        "slack_configured":      bool(req.slack_webhook_url),
+        "slack_available":       get_plan(req.plan).has_slack,
+        "next_step":             "POST /verify with your phone and code" if effective_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
     }
 
 
-# ── Fallback webhook ───────────────────────────────────────────────────────────
-
-def _send_fallback(subject: str, body: str) -> bool:
+@router.post("/verify")
+def verify(req: VerifyRequest):
     """
-    Fallback channel — fires when WhatsApp fails.
-    Configurable via FALLBACK_WEBHOOK_URL env var.
-    Supports generic HTTP POST (Slack, Teams, PagerDuty, custom).
+    Verify a WhatsApp number with the code that was sent.
+    When all contacts for a tenant are verified, tenant becomes active.
     """
-    url = os.getenv("FALLBACK_WEBHOOK_URL")
-    if not url:
-        logger.warning("No FALLBACK_WEBHOOK_URL set — fallback suppressed")
-        return False
-    try:
-        import urllib.request, json
-        payload = json.dumps({"text": f"*{subject}*\n{body}"}).encode()
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            ok = resp.status < 400
-            if ok:
-                logger.info("Fallback webhook sent: %s", subject)
-            return ok
-    except Exception as e:
-        logger.error("Fallback webhook failed: %s", e)
-        return False
+    phone = req.phone
+    if not phone.startswith("whatsapp:"):
+        phone = f"whatsapp:{phone}"
 
+    tenant_id = find_tenant_by_phone(phone)
+    if not tenant_id:
+        raise HTTPException(status_code=404, detail="Phone number not found in any tenant")
 
-# ── Twilio WhatsApp sender ─────────────────────────────────────────────────────
+    valid = verify_phone(phone, req.code)
+    if not valid:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 
-def _twilio_client():
-    from twilio.rest import Client
-    sid   = os.getenv("TWILIO_ACCOUNT_SID")
-    token = os.getenv("TWILIO_AUTH_TOKEN")
-    if not sid or not token:
-        raise RuntimeError("TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN not set")
-    return Client(sid, token)
+    mark_phone_verified(tenant_id, phone)
 
+    tenant   = get_tenant(tenant_id)
+    contacts = get_contacts(tenant_id)
+    pending  = [c["phone"] for c in contacts if not c.get("verified")]
 
-def _whatsapp_send(body: str) -> bool:
-    from_  = os.getenv("TWILIO_WHATSAPP_FROM")
-    to_    = os.getenv("TWILIO_WHATSAPP_TO")
-    if not from_ or not to_:
-        logger.warning("WhatsApp credentials not configured")
-        return False
-    try:
-        msg = _twilio_client().messages.create(body=body, from_=from_, to=to_)
-        logger.info("WhatsApp sent: %s", msg.sid)
-        return True
-    except Exception as e:
-        logger.error("WhatsApp failed: %s", e)
-        return False
-
-
-# ── Core send with fallback ────────────────────────────────────────────────────
-
-def _send_with_fallback(subject: str, body: str) -> bool:
-    """
-    Try WhatsApp first. If circuit breaker is open or send fails,
-    fall through to fallback webhook. Silence is never acceptable.
-    """
-    if cb_open():
-        logger.warning("WhatsApp suppressed (CB open) — using fallback")
-        result = _send_fallback(subject, body)
-        return result
-
-    ok = _whatsapp_send(body)
-    cb_record(ok)
-
-    if not ok:
-        logger.warning("WhatsApp failed — falling back to webhook")
-        _send_fallback(subject, body)
-
-    return ok
-
-
-# ── Notification task wrapper ──────────────────────────────────────────────────
-
-def _handle_task_result(task: asyncio.Task) -> None:
-    try:
-        task.result()
-    except Exception as e:
-        logger.error("🔥 Notification task failed: %s", e)
-
-
-def fire(coro) -> None:
-    """Schedule a notification coroutine as a non-blocking background task."""
-    task = asyncio.create_task(coro)
-    task.add_done_callback(_handle_task_result)
-
-
-async def _run_in_executor(fn: Callable, *args, **kwargs):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
-
-
-# ── Public notification API ────────────────────────────────────────────────────
-
-async def send_detection(incident_id: str, score: float, p95: float, err: float) -> None:
-    """Message 1 — DETECTED. No recovery link."""
-    body = (
-        f"🚨 API critical. Analysing...\n\n"
-        f"Score: {score:.0f}/100\n"
-        f"P95: {p95:.0f}ms\n"
-        f"Errors: {err*100:.0f}%\n\n"
-        f"Incident: {incident_id}"
-    )
-    await _run_in_executor(_send_with_fallback, "API Critical", body)
-
-
-async def send_validation(incident_id: str, score: float, p95: float, confirm_url: str) -> None:
-    """Message 2 — VALIDATED. Contains recovery link."""
-    body = (
-        f"⚡ Restart recommended.\n\n"
-        f"Score: {score:.0f}/100\n"
-        f"P95: {p95:.0f}ms\n\n"
-        f"Tap to authorise:\n{confirm_url}"
-    )
-    await _run_in_executor(_send_with_fallback, "Action Required", body)
-
-
-async def send_recovery(incident_id: str, score: float, duration_s: float) -> None:
-    """Message 3 — RESOLVED."""
-    minutes = int(duration_s // 60)
-    seconds = int(duration_s % 60)
-    duration_str = f"{minutes}m {seconds}s" if minutes else f"{seconds}s"
-    body = (
-        f"✅ Recovered. Score: {score:.0f}/100\n"
-        f"Duration: {duration_str}"
-    )
-    await _run_in_executor(_send_with_fallback, "Recovered", body)
-
-
-async def send_voice_escalation(incident_id: str, duration_s: float, score: float) -> None:
-    """Voice call escalation — fires after VOICE_S seconds."""
-    to_   = os.getenv("PRIMARY_PHONE")
-    from_ = os.getenv("TWILIO_PHONE_NUMBER")
-    if not to_ or not from_:
-        logger.warning("Voice escalation not configured")
-        return
-    minutes = int(duration_s // 60)
-    twiml = (
-        f"<Response><Say>"
-        f"Critical alert. Incident {incident_id}. "
-        f"Duration {minutes} minutes. Score {score:.0f}. "
-        f"Immediate action required."
-        f"</Say></Response>"
-    )
-    def _call():
+    if not pending and tenant:
         try:
-            call = _twilio_client().calls.create(to=to_, from_=from_, twiml=twiml)
-            logger.warning("Voice call: %s", call.sid)
-            return True
-        except Exception as e:
-            logger.error("Voice call failed: %s", e)
-            return False
-    await _run_in_executor(_call)
+            asyncio.create_task(_send_welcome_message(tenant, phone))
+        except Exception as exc:
+            logger.warning("Failed to schedule welcome message for %s: %s", phone, exc)
+
+    return {
+        "tenant_id":       tenant_id,
+        "phone":           phone,
+        "verified":        True,
+        "tenant_status":   tenant.get("status"),
+        "remaining":       len(pending),
+        "message":         "Tenant active!" if not pending else f"{len(pending)} number(s) still pending",
+    }
 
 
-async def send_secondary_escalation(incident_id: str, duration_s: float, score: float) -> None:
-    """Secondary engineer notification."""
-    from_  = os.getenv("TWILIO_WHATSAPP_FROM")
-    to_    = os.getenv("SECONDARY_WHATSAPP")
-    if not from_ or not to_:
-        logger.warning("Secondary engineer not configured")
-        return
-    minutes = int(duration_s // 60)
-    body = (
-        f"🚨 Escalation.\n\n"
-        f"Incident: {incident_id}\n"
-        f"Duration: {minutes} min\n"
-        f"Score: {score:.0f}/100\n\n"
-        f"Primary unresponsive."
-    )
-    def _send():
-        try:
-            msg = _twilio_client().messages.create(body=body, from_=from_, to=to_)
-            logger.error("Secondary notified: %s", msg.sid)
-            return True
-        except Exception as e:
-            logger.error("Secondary notify failed: %s", e)
-            _send_fallback("Escalation", body)
-            return False
-    await _run_in_executor(_send)
+@router.get("/tenant/{tenant_id}")
+def get_tenant_status(tenant_id: str):
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
 
 
-# ── Provider-based dispatch ────────────────────────────────────────────────────
+@router.get("/tenant/{tenant_id}/contacts")
+def get_tenant_contacts(tenant_id: str):
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    contacts = get_contacts(tenant_id)
+    return {
+        "tenant_id": tenant_id,
+        "contacts":  contacts,
+        "verified":  sum(1 for c in contacts if c.get("verified")),
+        "pending":   sum(1 for c in contacts if not c.get("verified")),
+    }
 
-async def dispatch(
-    tenant: dict,
-    incident_id: str,
-    message: str,
-) -> bool:
+
+@router.post("/tenant/{tenant_id}/test")
+async def test_incident(tenant_id: str):
     """
-    Route and deliver notification via tenant's configured channel.
-    Records every attempt in the delivery ledger.
-    Falls back to webhook if primary fails.
-    Never raises.
+    Trigger a simulated critical incident for a tenant.
+    Runs through the full pipeline — real notifications fire.
     """
-    from tenants import get_verified_numbers
-    if not tenant.get("whatsapp_numbers"):
-        verified = get_verified_numbers(tenant.get("tenant_id", ""))
-        if verified:
-            tenant = {**tenant, "whatsapp_numbers": verified}
+    tenant = get_tenant(tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
 
-    from providers import (
-        WhatsAppProvider, TelegramProvider,
-        WebhookProvider, SentProvider, SlackProvider,
-    )
-    from delivery_ledger import record_from_result
-
-    channel = tenant.get("notification_channel", "whatsapp")
-
-    if channel == "telegram":
-        primary = TelegramProvider()
-    elif channel == "sent":
-        primary = SentProvider()
-    else:
-        primary = WhatsAppProvider()
-
-    result = await primary.send(tenant, incident_id, message)
-    record_from_result(result)
-
-    if tenant.get("slack_webhook_url"):
-        from plans import get_tenant_plan
-        plan = get_tenant_plan(tenant)
-        if getattr(plan, "has_slack", False):
-            slack = SlackProvider()
-            slack_result = await slack.send(tenant, incident_id, message)
-            record_from_result(slack_result)
-
-    if result.success:
-        return True
-
-    logger.warning("Primary failed (%s) — trying webhook fallback", channel)
-    fallback        = WebhookProvider()
-    fallback_result = await fallback.send(tenant, incident_id, message)
-    record_from_result(fallback_result)
-
-    if not fallback_result.success:
-        logger.critical(
-            "ALL notifications failed for incident=%s tenant=%s",
-            incident_id, tenant.get("tenant_id"),
+    if tenant.get("status") != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tenant not active (status={tenant.get('status')}). Verify all contacts first."
         )
 
-    return fallback_result.success
+    plan  = get_tenant_plan(tenant)
 
+    if not plan.has_claude_decision:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "detail": "AI diagnosis not available on Hobby plan. Upgrade to Developer or higher.",
+                "code": "PLAN_FEATURE_UNAVAILABLE",
+            }
+        )
 
-# ── Channel-aware routing ──────────────────────────────────────────────────────
+    quota = incident_quota_remaining(tenant)
+    if quota == 0:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Incident quota exhausted for {plan.name} plan. Upgrade to continue."
+        )
 
-async def send_via_channel(
-    tenant: dict,
-    subject: str,
-    body: str,
-) -> bool:
-    """
-    Route notification to the tenant's configured channel.
-    """
-    channel = tenant.get("notification_channel", "whatsapp")
+    synthetic_health = {
+        "health_score": {
+            "score":  20.0,
+            "status": "critical",
+            "trend":  "degrading",
+        },
+        "metrics": {
+            "overall_p95_ms": 2500.0,
+            "error_rate":     0.75,
+        },
+        "alerts": [
+            {
+                "type":              "test_incident",
+                "severity":          "critical",
+                "triggered_by":      "manual_test",
+                "reason_for_trigger": "Test incident triggered via /test endpoint",
+            }
+        ],
+    }
 
-    if channel == "telegram":
-        from telegram_notifier import send_telegram
-        bot_token = tenant.get("telegram_bot_token")
-        chat_id   = tenant.get("telegram_chat_id")
-        full_message = f"*{subject}*\n\n{body}"
-        return await send_telegram(bot_token, chat_id, full_message)
+    from pipeline import open_incident, decide_new_incident, validate_decision_schema
+    from memory import save_incident, get_active_incident
+    from notifications import fire, send_detection
+    from action_generator import generate_recovery_token
+    import asyncio
 
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, lambda: _send_with_fallback(subject, body)
+    existing = get_active_incident(tenant_id=tenant_id)
+    if existing and existing.get("tenant_id") == tenant_id:
+        raise HTTPException(status_code=409, detail="Active incident already exists for this tenant")
+
+    incident_id = f"test-{tenant_id}-{int(time.time())}"
+    decision    = decide_new_incident(incident_id, 20.0, 2500.0, 0.75, 0.95)
+
+    valid, reason = validate_decision_schema(decision)
+    if not valid:
+        raise HTTPException(status_code=500, detail=f"Pipeline error: {reason}")
+
+    incident_record = open_incident(incident_id, 20.0, 2500.0, 0.75)
+    incident_record["tenant_id"] = tenant_id
+    save_incident(incident_record)
+
+    from audit import append_event
+    append_event(
+        incident_id=incident_id,
+        stage="DETECTED",
+        decision="escalate",
+        reason="Test incident triggered via /test endpoint",
+        confidence=0.95,
+        tenant_id=tenant_id,
     )
+
+    verified = get_verified_numbers(tenant_id)
+    base_url = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
+    token    = generate_recovery_token(incident_id, tenant_id=tenant_id)
+    url      = f"{base_url}/action/recover?token={token}"
+
+    from notifications import dispatch
+    asyncio.create_task(dispatch(
+        tenant=tenant,
+        incident_id=incident_id,
+        message=(
+            f"🚨 Test incident detected\n\n"
+            f"Score: 20/100\n"
+            f"P95: 2500ms\n"
+            f"Errors: 75%\n\n"
+            f"Incident: {incident_id}\n"
+            f"Recovery URL: {url}"
+        ),
+    ))
+
+    return {
+        "incident_id":     incident_id,
+        "tenant_id":       tenant_id,
+        "status":          "triggered",
+        "notified":        verified,
+        "recovery_url":    url,
+        "message":         "Test incident fired. Check WhatsApp.",
+    }
