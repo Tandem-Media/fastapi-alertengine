@@ -48,8 +48,10 @@ Your app now exposes `/health/alerts`.
 **Try it locally — no orchestrator needed:**
 
 ```bash
-# Install and run the demo
-pip install fastapi-alertengine uvicorn
+# Clone the repo and run the demo
+git clone https://github.com/Tandem-Media/fastapi-alertengine
+cd fastapi-alertengine
+pip install fastapi-alertengine uvicorn httpx
 uvicorn examples.quickstart_example:app --reload
 
 # In another terminal — simulate a spike
@@ -207,6 +209,8 @@ Startup+ plans get full DLQ management and replay tooling.
 
 > Sent.dm is the default WhatsApp provider across all tiers that include WhatsApp.
 > Hobby tier is Telegram only — no WhatsApp business account required to get started.
+> Enterprise "dedicated deployment" means a separate managed instance hosted by Tandem Media
+> under a dedicated SLA — not self-hosted. Contact us to discuss.
 
 ---
 
@@ -219,7 +223,7 @@ Startup+ plans get full DLQ management and replay tooling.
 | Solo | $299/mo | 3 | 50 | WhatsApp + Telegram |
 | Startup | $799/mo | 10 | 200 | WhatsApp + Telegram + Slack |
 | Scale | $1,500/mo | 20 | 1,000 | All channels + Voice escalation |
-| Enterprise | Custom | Custom | Custom | Custom + on-premise |
+| Enterprise | Custom | Custom | Custom | Custom + dedicated deployment |
 
 ---
 
@@ -256,7 +260,7 @@ without telemetry sprawl.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | REDIS_URL | Yes | Redis connection URL |
-| ALERTENGINE_BASE_URL | Yes | **Orchestrator's** public URL (used to generate recovery links sent to you) |
+| ALERTENGINE_BASE_URL | Yes | **Orchestrator's** public URL — provided after onboarding. Example: `https://your-tenant.alertengine.io` |
 | ANTHROPIC_API_KEY | Yes | Claude AI API key |
 | ALERT_SECRET | Yes | JWT signing secret |
 | TWILIO_ACCOUNT_SID | Twilio only | Twilio account SID |
@@ -267,9 +271,9 @@ without telemetry sprawl.
 | LOOP_INTERVAL_S | No | Polling interval seconds (default: 5) |
 | POLICY_MIN_SCORE_TO_ALERT | No | Min score to open incident (default: 70) |
 
-> `ALERTENGINE_BASE_URL` is the **orchestrator's** URL — the managed service URL
-> provided to you after onboarding. Your app's `/health/alerts` URL is configured
-> per-tenant during onboarding.
+> `ALERTENGINE_BASE_URL` is the orchestrator URL you receive after onboarding,
+> e.g. `https://your-tenant.alertengine.io`. Your app's `/health/alerts` URL
+> is configured separately per-tenant during onboarding.
 
 ---
 
@@ -303,7 +307,7 @@ tests/                  ← 232 tests, Python 3.10/3.11/3.12
 
 ## Adversarial Audit
 
-This system was audited by an autonomous AI agent (Manus AI) acting
+This system was audited by an autonomous AI agent acting
 as a hostile tenant attempting to break isolation, bypass human
 authorization, and overwhelm the system with concurrent requests.
 
@@ -324,9 +328,14 @@ authorization, and overwhelm the system with concurrent requests.
 pip install fastapi-alertengine
 ```
 
-**Try locally:**
+**Try locally (clone the repo first):**
 ```bash
+git clone https://github.com/Tandem-Media/fastapi-alertengine
+cd fastapi-alertengine
+pip install fastapi-alertengine uvicorn httpx
 uvicorn examples.quickstart_example:app --reload
+
+# In another terminal
 curl -X POST localhost:8000/simulate/spike
 curl -s localhost:8000/health/alerts | python3 -m json.tool
 ```
