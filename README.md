@@ -10,6 +10,21 @@ Add one line to your FastAPI app. Detect latency spikes, error surges, and degra
 
 ---
 
+## Human-Authorized. Always.
+
+> Nothing executes without your explicit approval.  
+> Every action is logged immutably.  
+> The system fails safe — never fails open.
+
+- `GET /action/recover` — preview only, zero side effects
+- `POST /action/recover/confirm` — irreversible, requires valid JWT
+- JWT tokens: tenant-scoped, 5-minute TTL, single-use
+- Replay protection: atomic Redis SET NX
+- Immutable audit trail on every stage transition
+- Adversarial audit: 10/10 checks passed
+
+---
+
 ## Install + Quickstart
 
 ```bash
@@ -24,9 +39,7 @@ app = FastAPI()
 instrument(app)  # that's it
 ```
 
-Your app now exposes /health/alerts.
-
-Additional endpoints:
+Your app now exposes `/health/alerts`.
 
 | Endpoint | Description |
 |----------|-------------|
@@ -37,23 +50,30 @@ Additional endpoints:
 
 ---
 
-## Proof Strip
+## How It Works
 
-- 232 tests passing (Python 3.10, 3.11, 3.12)
-- Adversarial audit by autonomous AI agent: 10/10 passed
-  (replay attacks, cross-tenant isolation, concurrent
-  token floods)
-- Live production tenant: fintech platform, Zimbabwe
-- Human-authorized recovery confirmed end-to-end
+**Free SDK (Steps 1–2):**
+
+- **Step 1:** `instrument(app)` — P95 latency tracking, error rate detection, health scoring begins immediately
+- **Step 2:** `GET /health/alerts` — returns P95, error rate, health score 0-100, trend direction
+
+**Paid Orchestrator (Steps 3–4):**
+
+- **Step 3:** Managed orchestrator polls `/health/alerts` every 5 seconds. When score drops below threshold, Claude AI diagnoses root cause in plain English.
+- **Step 4:** WhatsApp or Telegram alert arrives with diagnosis and a single-use recovery link. You tap approve. Nothing executes without you.
 
 ---
 
-## How It Works
+## Proof Strip
 
-- Step 1: instrument(app) — local incident sensing begins
-- Step 2: /health/alerts — P95, error rate, health score 0-100
-- Step 3: Managed orchestrator detects degradation, Claude diagnoses root cause in plain English
-- Step 4: WhatsApp/Telegram alert arrives — you tap to authorize recovery. Nothing executes without you.
+**Production Proven**
+- Live production tenant: fintech platform, Zimbabwe
+- Human-authorized recovery confirmed end-to-end
+
+**Security Verified**
+- 232 tests passing (Python 3.10, 3.11, 3.12)
+- Adversarial audit by autonomous AI agent: 10/10 passed
+  (replay attacks, cross-tenant isolation, concurrent token floods)
 
 ---
 
@@ -118,9 +138,36 @@ Alert Engine              ← P95 + error rate + anomaly scoring
 
 ## Managed Incident Command — Paid
 
-The orchestrator is the paid layer on top of the free package.
-It polls your health endpoint, runs AI diagnosis via Claude,
-and delivers human-authorized recovery via WhatsApp or Telegram.
+The orchestrator is the paid layer on top of the free SDK.
+It runs as a managed service on your behalf — you never install
+it on your own infrastructure.
+
+### How recovery works
+
+The orchestrator calls a **recovery webhook URL** that you provide
+during onboarding. This is a URL on your own infrastructure that
+executes the recovery action (restart a worker, clear a cache,
+scale a service). You control what the webhook does. The orchestrator
+only calls it after you tap approve.
+
+```
+Your FastAPI app ← instrument(app)
+        ↓
+/health/alerts endpoint (public, read-only)
+        ↓
+AlertEngine Orchestrator (polls every 5s)
+        ↓
+Claude AI diagnosis
+        ↓
+WhatsApp/Telegram alert → you tap approve
+        ↓
+POST your-recovery-webhook.com/restart  ← you control this
+        ↓
+Confirmation message sent
+```
+
+Nothing runs on your servers except the free SDK middleware.
+The orchestrator never SSH's into your machines.
 
 ### How an incident works
 
@@ -130,10 +177,8 @@ and delivers human-authorized recovery via WhatsApp or Telegram.
 4. You receive WhatsApp/Telegram: what broke, why, suggested fix
 5. Secure recovery link included (JWT-signed, expires in 5 minutes)
 6. You tap Approve
-7. Fix executes (restart, scale, clear cache)
+7. Your recovery webhook executes
 8. You receive confirmation when system recovers
-
-Nothing executes without your explicit approval.
 
 ### Notification Channels
 
@@ -145,41 +190,6 @@ Nothing executes without your explicit approval.
 | Slack | Incoming Webhooks | Startup+ | Team transparency |
 | Webhook | HTTP POST | All | Slack/Teams/PagerDuty fallback |
 
-### Orchestrator API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Service health + Redis status |
-| GET | /status | Active tenants, degraded mode, DLQ, stage gates |
-| POST | /onboard | Register a new tenant |
-| POST | /verify | Verify WhatsApp number |
-| GET | /tenant/{id} | Get tenant status |
-| GET | /tenant/{id}/contacts | Get contact verification status |
-| POST | /tenant/{id}/test | Trigger test incident |
-| GET | /audit/{incident_id} | Incident audit log (requires ?tenant_id=) |
-| GET | /delivery/{incident_id} | Delivery log (requires ?tenant_id=) |
-| GET | /dlq | Dead letter queue (Startup+ plan required) |
-| GET | /action/recover | Human-authorized recovery endpoint |
-| POST | /onboarding/activate | Quick-start: activate after test alert |
-| GET | /onboarding/status | Quick-start: onboarding status |
-| POST | /onboarding/test-alert | Quick-start: send test alert |
-| POST | /onboarding/test-connection | Quick-start: verify health URL |
-
-> `/onboarding/*` endpoints are quick-start flows for dev/testing.
-> Use `/onboard` + `/verify` for production phone-verified deployments.
-
----
-
-## Human-Authorized. Always.
-
-- GET /action/recover = preview only (safe to open)
-- POST /action/recover/confirm = irreversible authorization
-- JWT tokens: tenant-scoped, time-limited, single-use
-- Replay protection: atomic Redis SET NX
-- 3-layer duplicate incident guard
-- Immutable audit trail on every action
-- Adversarial audit: 10/10 checks passed
-
 ---
 
 ## Pricing
@@ -190,7 +200,7 @@ Nothing executes without your explicit approval.
 | Developer | $99/mo | 1 | 10 | WhatsApp |
 | Solo | $299/mo | 3 | 50 | WhatsApp + Telegram |
 | Startup | $799/mo | 10 | 200 | WhatsApp + Telegram + Slack |
-| Scale | $1,500/mo | 20 | 1,000 | WhatsApp + Telegram + Slack + Voice |
+| Scale | $1,500/mo | 20 | 1,000 | All channels + Voice |
 | Enterprise | Custom | Custom | Custom | Custom |
 
 ---
@@ -213,7 +223,7 @@ Nothing executes without your explicit approval.
 | Variable | Required | Description |
 |----------|----------|-------------|
 | REDIS_URL | Yes | Redis connection URL |
-| ALERTENGINE_BASE_URL | Yes | Public URL of this orchestrator |
+| ALERTENGINE_BASE_URL | Yes | **Orchestrator's** public URL (used to generate recovery links) |
 | ANTHROPIC_API_KEY | Yes | Claude AI API key |
 | ALERT_SECRET | Yes | JWT signing secret |
 | TWILIO_ACCOUNT_SID | Twilio only | Twilio account SID |
@@ -224,27 +234,30 @@ Nothing executes without your explicit approval.
 | LOOP_INTERVAL_S | No | Polling interval seconds (default: 5) |
 | POLICY_MIN_SCORE_TO_ALERT | No | Min score to open incident (default: 70) |
 
+> `ALERTENGINE_BASE_URL` is the orchestrator's URL, not your app's URL.
+> Your app's URL is set per-tenant during onboarding via the `health_url` field.
+
 ---
 
 ## Repository Structure
 
 ```text
-fastapi_alertengine/     ← Free PyPI package
+fastapi_alertengine/     ← Free SDK — MIT licensed
   middleware.py          ← RequestMetricsMiddleware
   engine.py             ← Core alert engine
   intelligence.py       ← Adaptive thresholds, health scoring
   actions/              ← Recovery suggestions and JWT tokens
   storage.py            ← Redis Streams persistence
-orchestrator/           ← Paid managed service
-  loop.py              ← Multi-tenant polling
-  pipeline.py          ← Incident state machine
+
+orchestrator/           ← Managed service — source-available, not MIT
+  loop.py              ← Multi-tenant polling         See LICENSE-ORCHESTRATOR.md
   claude_engine.py     ← AI diagnosis
   notifications.py     ← Multi-channel dispatch
-  providers/           ← WhatsApp, Telegram, Slack, Sent.dm, Webhook
   audit.py             ← Immutable forensic log
   plans.py             ← Billing tiers and feature gates
+
 examples/               ← Demo scripts
-docs/                   ← Agent integration guide
+docs/                   ← Landing page (GitHub Pages)
 tests/                  ← 232 tests, Python 3.10/3.11/3.12
 ```
 
@@ -268,7 +281,7 @@ authorization, and overwhelm the system with concurrent requests.
 
 ## Get Started
 
-**Free package:**
+**Free SDK:**
 ```bash
 pip install fastapi-alertengine
 ```
@@ -287,10 +300,13 @@ Built in Zimbabwe where WhatsApp is the operational
 control plane and engineering teams are mobile-first.
 Designed for FastAPI teams everywhere who want incident
 intelligence without telemetry sprawl.
+
 ---
 
 ## License + Contact
 
-MIT — free package only.
-The orchestrator is a commercial service.
+**Free SDK** (`fastapi_alertengine/`): MIT — see [LICENSE](LICENSE)
+
+**Orchestrator** (`orchestrator/`): Source-available for audit purposes only — see [LICENSE-ORCHESTRATOR.md](LICENSE-ORCHESTRATOR.md)
+
 Contact: anchorflowalertengine@outlook.com
