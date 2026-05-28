@@ -50,6 +50,7 @@ def create_tenant(
     sent_phone_id: Optional[str] = None,
     slack_webhook_url: Optional[str] = None,
     slack_channel: Optional[str] = None,
+    recovery_webhook_url: Optional[str] = None,
 ) -> dict:
     """Register a new tenant. Contacts start as unverified."""
     tenant_id = str(uuid.uuid4())[:8]
@@ -76,6 +77,7 @@ def create_tenant(
         "sent_phone_id":         sent_phone_id,
         "slack_webhook_url":     slack_webhook_url,
         "slack_channel":         slack_channel,
+        "recovery_webhook_url":  recovery_webhook_url,
         "incident_count":        0,
         "incidents_this_month":  0,
         "incidents_reset_at":    now,

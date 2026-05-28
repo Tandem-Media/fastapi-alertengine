@@ -58,6 +58,7 @@ class OnboardRequest(BaseModel):
     sent_phone_id:          Optional[str] = None
     slack_webhook_url:      Optional[str] = None
     slack_channel:          Optional[str] = None
+    recovery_webhook_url:   Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -165,6 +166,7 @@ def onboard(req: OnboardRequest):
         sent_phone_id=req.sent_phone_id,
         slack_webhook_url=req.slack_webhook_url,
         slack_channel=req.slack_channel,
+        recovery_webhook_url=req.recovery_webhook_url,
     )
 
     sent    = []

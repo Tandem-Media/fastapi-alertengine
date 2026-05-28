@@ -306,40 +306,156 @@ async def recover_action(token: str):
 async def recover_action_confirm(token: str):
     """
     Human-authorized recovery endpoint.
-    Validates JWT token, enforces replay protection,
-    writes audit entry, and returns authorization confirmation.
-    Called when engineer taps the recovery link in WhatsApp/Telegram.
+
+    Flow:
+    1. Validate JWT token (signature, expiry, single-use via Redis SET NX)
+    2. Write AUTHORIZED audit entry
+    3. POST to tenant's recovery_webhook_url with retry logic (3 attempts, exponential backoff)
+    4. Write EXECUTED or WEBHOOK_FAILED audit entry
+    5. Push to DLQ on webhook failure
+    6. Return confirmation with webhook status
     """
     try:
         from action_generator import validate_and_consume
         valid, payload, reason = validate_and_consume(token)
         if not valid:
             raise HTTPException(status_code=401, detail=reason)
-        # Write audit entry for the authorization
+
+        incident_id   = payload.get("incident_id", "unknown")
+        tenant_id     = payload.get("tenant_id")
+        action        = payload.get("action", "recover")
+        authorized_at = time.time()
+
+        # Write AUTHORIZED audit entry
         try:
             from audit import append_event
             append_event(
-                incident_id=payload.get("incident_id", "unknown"),
+                incident_id=incident_id,
                 stage="AUTHORIZED",
-                decision="recover",
+                decision=action,
                 reason="Engineer authorized recovery via secure link",
                 confidence=1.0,
                 actor="engineer",
-                tenant_id=payload.get("tenant_id"),
+                tenant_id=tenant_id,
             )
         except Exception as audit_err:
             logger.warning("Audit write failed on recovery: %s", audit_err)
+
+        # Fetch tenant to get recovery_webhook_url
+        webhook_url = None
+        try:
+            from tenants import get_tenant
+            tenant = get_tenant(tenant_id) if tenant_id else None
+            if tenant:
+                webhook_url = tenant.get("recovery_webhook_url")
+        except Exception as e:
+            logger.warning("Could not fetch tenant for webhook: %s", e)
+
+        # POST to recovery webhook with retry
+        webhook_success = False
+        webhook_error   = None
+
+        if webhook_url:
+            import httpx as _httpx
+            webhook_payload = {
+                "incident_id":   incident_id,
+                "tenant_id":     tenant_id,
+                "action":        action,
+                "authorized_at": authorized_at,
+                "authorized_by": "engineer",
+            }
+
+            # 3 attempts with exponential backoff (2s, 4s)
+            for attempt in range(1, 4):
+                try:
+                    async with _httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.post(
+                            webhook_url,
+                            json=webhook_payload,
+                            headers={"X-AlertEngine-Incident": incident_id},
+                        )
+                        if resp.status_code < 400:
+                            webhook_success = True
+                            logger.info(
+                                "Recovery webhook succeeded (attempt %d): status=%d",
+                                attempt, resp.status_code,
+                            )
+                            break
+                        else:
+                            webhook_error = f"HTTP {resp.status_code}"
+                            logger.warning(
+                                "Recovery webhook attempt %d failed: status=%d",
+                                attempt, resp.status_code,
+                            )
+                except Exception as e:
+                    webhook_error = str(e)
+                    logger.warning("Recovery webhook attempt %d error: %s", attempt, e)
+
+                if attempt < 3:
+                    await asyncio.sleep(2 ** attempt)  # 2s, 4s backoff
+
+            # Write EXECUTED or WEBHOOK_FAILED audit entry
+            try:
+                from audit import append_event
+                append_event(
+                    incident_id=incident_id,
+                    stage="EXECUTED" if webhook_success else "WEBHOOK_FAILED",
+                    decision=action,
+                    reason=(
+                        f"Webhook succeeded: {webhook_url}"
+                        if webhook_success
+                        else f"Webhook failed after 3 attempts: {webhook_error}"
+                    ),
+                    confidence=1.0,
+                    actor="orchestrator",
+                    tenant_id=tenant_id,
+                )
+            except Exception as audit_err:
+                logger.warning("Audit write failed on execution: %s", audit_err)
+
+            # Push to DLQ if webhook failed
+            if not webhook_success:
+                try:
+                    from dlq import push as dlq_push
+                    dlq_push(
+                        incident_id=incident_id,
+                        action_type="RECOVERY_WEBHOOK",
+                        error=webhook_error or "Unknown error",
+                        stage="WEBHOOK_FAILED",
+                        action_id=f"recovery-{incident_id}",
+                    )
+                    logger.error(
+                        "Recovery webhook failed after 3 attempts → DLQ: %s", webhook_url)
+                except Exception as dlq_err:
+                    logger.error("DLQ push failed: %s", dlq_err)
+        else:
+            logger.warning(
+                "No recovery_webhook_url for tenant %s — authorized but no action executed",
+                tenant_id,
+            )
+
         return {
-            "authorized":    True,
-            "incident_id":   payload.get("incident_id"),
-            "tenant_id":     payload.get("tenant_id"),
-            "action":        payload.get("action"),
-            "authorized_at": time.time(),
-            "message":       "Recovery action authorized. System will execute fix.",
+            "authorized":      True,
+            "incident_id":     incident_id,
+            "tenant_id":       tenant_id,
+            "action":          action,
+            "authorized_at":   authorized_at,
+            "webhook_called":  webhook_url is not None,
+            "webhook_success": webhook_success,
+            "message": (
+                "Recovery action authorized and executed."
+                if webhook_success
+                else "Recovery authorized. " + (
+                    "Webhook failed — check DLQ."
+                    if webhook_url else
+                    "No recovery webhook configured."
+                )
+            ),
         }
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("recover_action_confirm error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
