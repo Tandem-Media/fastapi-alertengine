@@ -82,6 +82,57 @@ Watch the health score drop in real time. No account required.
 - **Step 3:** Managed orchestrator polls your `/health/alerts` every 5 seconds. When score drops below threshold, Claude AI diagnoses root cause in plain English.
 - **Step 4:** WhatsApp or Telegram alert arrives with diagnosis and a single-use recovery link. You tap approve. Nothing executes without you.
 
+
+## Architecture
+
+```
+Your servers                          Tandem Media servers
+─────────────────────────────────     ──────────────────────────────────────
+FastAPI app                           Orchestrator (polls every 5s)
+  instrument(app)                       ↓ detects degradation
+  ↓                                   Claude AI diagnosis
+Redis Streams ──→ /health/alerts ──→    ↓ confidence gated
+  append-only        P95 · score        WhatsApp / Telegram alert
+  event log          · trend              plain English · recovery link
+                                          single-use JWT · 5 min TTL
+                                          ↓ engineer taps approve
+                                        POST /action/recover/confirm
+                                          ↓ 3 retries · exponential backoff
+                                        Your recovery webhook ←── you control this
+                                          ↓
+                                        Immutable audit log
+                                          every stage · every decision · every approval
+```
+
+**Free SDK** (teal) runs on your servers. Zero side effects. Pure measurement.
+**Paid orchestrator** (purple) runs on Tandem Media's servers. Never touches your machines directly.
+**Human layer** (amber) — nothing executes without your explicit tap-to-approve.
+**Execution + audit** (coral) — your webhook runs the fix. Everything is logged immutably.
+
+---
+
+## Compliance Features
+
+AlertEngine applies financial-grade authorization discipline to API infrastructure.
+Every design decision maps to a real compliance requirement.
+
+| Compliance requirement | AlertEngine implementation |
+|------------------------|---------------------------|
+| Human authorization before execution | Engineer must tap approve — no autonomous remediation |
+| Immutable audit trail | Append-only Redis log — every stage, decision, and approval recorded |
+| Replay attack prevention | Single-use JWT tokens via atomic Redis SET NX |
+| Cross-tenant data isolation | Tenant ID validated on every endpoint — 403 on mismatch |
+| Separation of duties | Free SDK (data plane) and orchestrator (control plane) are fully isolated |
+| Incident documentation | Full timeline reconstructable from audit log — DETECTED → AUTHORIZED → EXECUTED |
+| Degraded mode handling | NORMAL / DEGRADED / EMERGENCY with automatic transitions — never crashes |
+| Recovery action accountability | Who approved, when, what executed — all logged with timestamps |
+
+**Why this matters:** In regulated industries (fintech, healthtech, logistics), every production action needs a paper trail. AlertEngine produces that trail automatically — no manual logging, no after-the-fact reconstruction.
+
+**The accounting parallel:** I spent my career in finance before building AlertEngine. In accounting, no transaction executes without authorization and every action leaves an audit trail. AlertEngine applies that same discipline to production infrastructure.
+
+---
+
 ---
 
 ## Proof Strip
