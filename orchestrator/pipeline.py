@@ -19,6 +19,13 @@ from typing import Optional
 
 logger = logging.getLogger("orchestrator.pipeline")
 
+try:
+    from incident_policy import should_recover, POLICY_VERSION
+    logger.info("Policy loaded: v%s", POLICY_VERSION)
+except Exception as e:
+    logger.warning("incident_policy unavailable: %s — using hardcoded defaults", e)
+    def should_recover(score, error_rate): return score > 70 and error_rate < 0.05
+
 
 class IncidentStage(str, Enum):
     """
@@ -232,8 +239,8 @@ def decide(incident: dict, health: dict, claude: dict) -> dict:
         score      = health.get("health_score", {}).get("score", 100)
         err        = health.get("metrics", {}).get("error_rate", 0)
 
-        # Recovery check
-        if score > 70 and err < 0.05:
+        # Recovery check — uses incident_policy thresholds
+        if should_recover(score, err):
             return {
                 "next_stage":  "RECOVERED",
                 "actions":     [{"type": "SEND_NOTIFICATION",

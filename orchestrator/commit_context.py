@@ -81,7 +81,11 @@ def store_commit(
         })
         r = _redis()
         r.zadd(key, {entry: timestamp})
-        r.zremrangebyrank(key, 0, -(MAX_COMMITS + 1))  # keep newest N
+        # Safe trim: count first, then remove oldest if over limit
+        # zremrangebyrank negative semantics are error-prone — use explicit count
+        count = r.zcard(key)
+        if count > MAX_COMMITS:
+            r.zremrangebyrank(key, 0, count - MAX_COMMITS - 1)
         r.expire(key, COMMITS_TTL)
         logger.info(
             "Stored commit %s for tenant %s: %s",

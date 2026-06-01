@@ -38,6 +38,18 @@ except Exception as e:
     _record_turn = lambda *args, **kwargs: None
 
 try:
+    from incident_policy import POLICY, POLICY_VERSION as _POLICY_VERSION
+    _has_policy = True
+except Exception as e:
+    logger.warning("incident_policy unavailable: %s — using hardcoded defaults", e)
+    _has_policy = False
+    POLICY = {
+        "recover_score": 70, "recover_error_rate": 0.05,
+        "validate_score": 40, "validate_error_rate": 0.20,
+        "suppress_confidence": 0.60,
+    }
+
+try:
     from commit_context import commit_context as _commit_context
     _has_commits = True
 except Exception as e:
@@ -185,6 +197,14 @@ def _build_prompt(
 
     service_name = inc.get("service_name", os.getenv("SERVICE_NAME", "Payment API"))
 
+    # Inject current policy so Claude uses correct thresholds
+    _policy_note = (
+        f"Policy v{POLICY.get('recover_score', 70):.0f}: "
+        f"recover when score>{POLICY.get('recover_score', 70):.0f} and err<{POLICY.get('recover_error_rate', 0.05):.0%}, "
+        f"validate when score<{POLICY.get('validate_score', 40):.0f} and err>{POLICY.get('validate_error_rate', 0.20):.0%}, "
+        f"suppress when confidence<{POLICY.get('suppress_confidence', 0.60):.0%}"
+    )
+
     lines = [
         f"Service: {service_name}",
         f"Health status: {hs.get('status', 'unknown')}",
@@ -193,6 +213,7 @@ def _build_prompt(
         f"P95 latency: {m.get('overall_p95_ms', 0):.0f}ms",
         f"Error rate: {m.get('error_rate', 0)*100:.1f}%",
         f"Recovery URL: {recovery_url or 'pending'}",
+        f"Active policy: {_policy_note}",
     ]
 
     # Inject baseline context if available
@@ -257,7 +278,18 @@ async def get_decision(
             try:
                 history = _build_history(incident_id)
                 if history:
-                    messages = history + messages
+                    # Inject re-evaluation instruction to prevent confirmation bias.
+                    # Claude should treat prior diagnoses as hypotheses, not facts.
+                    reeval = {
+                        "role": "user",
+                        "content": (
+                            "Previous hypotheses shown above. "
+                            "Re-evaluate using current metrics. "
+                            "Do not assume prior diagnosis is correct — "
+                            "confirm or revise based on new evidence."
+                        )
+                    }
+                    messages = history + [reeval] + messages
             except Exception as e:
                 logger.debug("Diagnosis history failed: %s", e)
 

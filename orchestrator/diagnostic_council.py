@@ -59,6 +59,12 @@ DIVERGENCE_THRESHOLD = float(os.getenv("COUNCIL_DIVERGENCE_THRESHOLD", "0.6"))
 # Whether to run council (can be disabled to save cost)
 COUNCIL_ENABLED = os.getenv("COUNCIL_ENABLED", "true").lower() == "true"
 
+try:
+    from incident_policy import POLICY
+    DIVERGENCE_THRESHOLD = POLICY.get("council_divergence", 0.6)
+except Exception:
+    DIVERGENCE_THRESHOLD = float(os.getenv("COUNCIL_DIVERGENCE_THRESHOLD", "0.6"))
+
 
 # ── Tool schema ────────────────────────────────────────────────────────────────
 

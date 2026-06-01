@@ -121,32 +121,33 @@ def replay_incident_state(incident_id: str) -> Optional[dict]:
     started_at    = log[0].get("timestamp", time.time())
     last_updated  = started_at
     history       = []
-    seen_stages   = set()
+
+    # Forensics systems never discard events.
+    # Replay strictly from the log — if the log is corrupt, mark it.
+    # seen_stages removed: duplicate stages are evidence of bugs or retries,
+    # not noise to be filtered.
+    replay_warnings = []
 
     for entry in log:
         stage = entry.get("stage")
         if not stage:
             continue
 
-        # Skip duplicates
-        if stage in seen_stages:
-            logger.debug("Replay: skipping duplicate stage %s", stage)
-            continue
-
-        # Validate transition
+        # Validate transition — warn but do NOT skip
         expected = ALLOWED_TRANSITIONS.get(current_stage)
-        if stage != expected and stage != "RECOVERED":
-            logger.warning("Replay: invalid transition %s → %s — skipping",
-                           current_stage, stage)
-            continue
+        if stage != expected and stage not in ("RECOVERED", "FAILED", "EXPIRED", "WEBHOOK_FAILED"):
+            warn = f"Unexpected transition {current_stage} → {stage} (expected {expected})"
+            logger.warning("Replay: %s", warn)
+            replay_warnings.append(warn)
+            # Continue anyway — record what actually happened
 
         current_stage = stage
         last_updated  = entry.get("timestamp", last_updated)
-        seen_stages.add(stage)
         history.append({
-            "stage": stage,
-            "at":    entry.get("timestamp"),
-            "meta":  {"replayed": True},
+            "stage":    stage,
+            "at":       entry.get("timestamp"),
+            "actor":    entry.get("actor", "unknown"),
+            "meta":     {"replayed": True},
         })
 
     if not current_stage:
@@ -171,6 +172,8 @@ def replay_incident_state(incident_id: str) -> Optional[dict]:
         "resolved_at":    last_updated if current_stage == "RECOVERED" else None,
         "history":        history,
         "replayed":       True,
+        "replay_warnings": replay_warnings,
+        "replay_integrity": "clean" if not replay_warnings else "warnings",
     }
 
     logger.info("Replay complete: %s → stage=%s", incident_id, current_stage)

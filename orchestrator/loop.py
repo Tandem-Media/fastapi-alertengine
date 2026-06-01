@@ -367,9 +367,17 @@ async def _process_tenant(tenant: dict) -> None:
     logger.info("[%s] Health: %s | score=%.0f | mode=%s",
                 tenant_id, status, score, mode)
 
-    # ── Update baseline on healthy polls ──────────────────────────────────────
-    if status == "healthy":
+    # ── Update baseline on healthy polls only ─────────────────────────────────
+    # IMPORTANT: Never update baseline during degraded/incident periods.
+    # Learning from P95=8000ms would poison the baseline, making future
+    # incidents appear as "only 1.2x baseline" when they are actually severe.
+    if status == "healthy" and score >= 80:
         _update_baseline_safe(tenant_id, health)
+    elif status != "healthy" and incident is None:
+        logger.debug(
+            "[%s] Baseline update skipped — status=%s score=%.0f",
+            tenant_id, status, score,
+        )
 
     incident = _get_tenant_incident(tenant_id)
 
