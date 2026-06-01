@@ -44,6 +44,15 @@ from notifications import (
 )
 from action_generator import generate_recovery_token
 from claude_engine import get_decision as claude_decide
+
+# Module-level council import — fails loud at startup if unavailable
+try:
+    from diagnostic_council import council_diagnose
+    _has_council = True
+except Exception as e:
+    logger.warning("Diagnostic council unavailable: %s", e)
+    _has_council = False
+    council_diagnose = claude_decide
 from policy import (
     should_alert,
     should_escalate_voice,
@@ -403,7 +412,8 @@ async def _process_tenant(tenant: dict) -> None:
                     "Lease lost before Claude call | %s", tenant_id)
                 return
 
-            claude = await claude_decide(
+            claude = await council_diagnose(
+                health, incident=None, tenant_id=tenant_id) if _has_council else await claude_decide(
                 health, incident=None, tenant_id=tenant_id)
             if claude["action"] not in ("escalate", "validate"):
                 return
@@ -431,6 +441,12 @@ async def _process_tenant(tenant: dict) -> None:
                 decision=claude["action"], reason=decision["reason"],
                 confidence=decision["confidence"],
                 tenant_id=tenant_id,
+                metadata={
+                    "council_mode":  claude.get("mode", "single"),
+                    "diverged":      claude.get("diverged", False),
+                    "diagnosis_a":   claude.get("diagnosis_a"),
+                    "diagnosis_b":   claude.get("diagnosis_b"),
+                },
             )
 
             await _execute_actions(
