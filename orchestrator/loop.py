@@ -373,13 +373,16 @@ async def _process_tenant(tenant: dict) -> None:
     # incidents appear as "only 1.2x baseline" when they are actually severe.
     if status == "healthy" and score >= 80:
         _update_baseline_safe(tenant_id, health)
-    elif status != "healthy" and incident is None:
-        logger.debug(
-            "[%s] Baseline update skipped — status=%s score=%.0f",
-            tenant_id, status, score,
-        )
+    # Baseline is NOT updated during unhealthy periods — done after incident load below
 
     incident = _get_tenant_incident(tenant_id)
+
+    # Log baseline skip reason now that incident state is known
+    if status != "healthy" and incident is not None:
+        logger.debug(
+            "[%s] Baseline update skipped — active incident, status=%s score=%.0f",
+            tenant_id, status, score,
+        )
 
     # ── New critical incident ──────────────────────────────────────────────────
     if status == "critical" and incident is None:
