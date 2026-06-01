@@ -115,14 +115,25 @@ async def _fetch_health(health_url: str) -> dict | None:
 
 # ── Tenant incident key ────────────────────────────────────────────────────────
 
-def _get_tenant_incident(tenant_id: str) -> dict | None:
-    """Load active incident for a specific tenant."""
-    try:
-        import redis, json, os
-        r = redis.Redis.from_url(
+# Module-level Redis singleton — reused across all tenant helpers
+_loop_redis_client = None
+
+def _loop_redis():
+    global _loop_redis_client
+    if _loop_redis_client is None:
+        import redis
+        _loop_redis_client = redis.Redis.from_url(
             os.getenv("REDIS_URL", "redis://localhost:6379/0"),
             decode_responses=True,
         )
+    return _loop_redis_client
+
+
+def _get_tenant_incident(tenant_id: str) -> dict | None:
+    """Load active incident for a specific tenant."""
+    try:
+        import json
+        r = _loop_redis()
         key = f"orchestrator:active_incident:{tenant_id}"
         incident_id = r.get(key)
         if not incident_id:
@@ -136,11 +147,7 @@ def _get_tenant_incident(tenant_id: str) -> dict | None:
 
 def _save_tenant_active(tenant_id: str, incident_id: str) -> None:
     try:
-        import redis, os
-        r = redis.Redis.from_url(
-            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
+        r = _loop_redis()
         r.setex(f"orchestrator:active_incident:{tenant_id}", 86400, incident_id)
     except Exception as e:
         logger.error("_save_tenant_active failed: %s", e)
@@ -148,11 +155,7 @@ def _save_tenant_active(tenant_id: str, incident_id: str) -> None:
 
 def _clear_tenant_active(tenant_id: str) -> None:
     try:
-        import redis, os
-        r = redis.Redis.from_url(
-            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-            decode_responses=True,
-        )
+        r = _loop_redis()
         r.delete(f"orchestrator:active_incident:{tenant_id}")
     except Exception as e:
         logger.error("_clear_tenant_active failed: %s", e)
@@ -163,7 +166,8 @@ def _clear_tenant_active(tenant_id: str) -> None:
 def _update_baseline_safe(tenant_id: str, health: dict) -> None:
     """
     Update per-tenant EMA baseline on every healthy poll.
-    Silently skips if baseline module unavailable.
+    Logs at WARNING if baseline update fails — baseline is part of
+    the decision system, silent failures degrade diagnostic quality.
     """
     try:
         from baseline import update_baseline
@@ -172,7 +176,11 @@ def _update_baseline_safe(tenant_id: str, health: dict) -> None:
         err = m.get("error_rate", 0)
         update_baseline(tenant_id, p95, err)
     except Exception as e:
-        logger.debug("Baseline update skipped: %s", e)
+        logger.warning(
+            "Baseline update failed for tenant %s — "
+            "AI diagnosis will lack deviation context: %s",
+            tenant_id, e,
+        )
 
 
 # ── Notification dispatcher (tenant-aware) ────────────────────────────────────

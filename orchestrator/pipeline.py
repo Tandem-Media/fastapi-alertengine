@@ -14,18 +14,64 @@ Rules:
 import os
 import time
 import logging
+from enum import Enum
 from typing import Optional
 
 logger = logging.getLogger("orchestrator.pipeline")
 
+
+class IncidentStage(str, Enum):
+    """
+    Canonical incident stage definitions.
+
+    These are contracts — changing a value here changes the audit log,
+    the state machine, and every downstream consumer.
+
+    Stages are ordered. RECOVERED and RESOLVED are terminal.
+    Use is_terminal() to check for end states.
+    """
+    DETECTED          = "DETECTED"           # Incident opened, diagnosis running
+    PROPOSED          = "PROPOSED"           # WhatsApp/Telegram alert sent
+    VALIDATED         = "VALIDATED"          # Recovery link delivered
+    AUTHORIZED        = "AUTHORIZED"         # Engineer tapped approve
+    EXECUTED          = "EXECUTED"           # Recovery webhook called
+    RESOLVED          = "RESOLVED"           # Human-closed
+    RECOVERED         = "RECOVERED"          # System-detected health restoration
+    WEBHOOK_FAILED    = "WEBHOOK_FAILED"     # Recovery webhook failed after retries
+    EXPIRED           = "EXPIRED"            # JWT token TTL exceeded, no action taken
+    FAILED            = "FAILED"             # Unrecoverable error, captured in DLQ
+
+    @classmethod
+    def is_terminal(cls, stage: str) -> bool:
+        """Return True if this stage has no further transitions."""
+        return stage in {
+            cls.RESOLVED.value,
+            cls.RECOVERED.value,
+            cls.EXPIRED.value,
+            cls.FAILED.value,
+        }
+
+    @classmethod
+    def active_stages(cls) -> list:
+        """Stages that represent an open, actionable incident."""
+        return [
+            cls.DETECTED.value,
+            cls.PROPOSED.value,
+            cls.VALIDATED.value,
+            cls.AUTHORIZED.value,
+            cls.EXECUTED.value,
+        ]
+
+
 # Valid stages in order — uppercase throughout
+# Keep this list for backward compatibility with existing code
 STAGES = [
-    "DETECTED",
-    "PROPOSED",
-    "VALIDATED",
-    "AUTHORIZED",
-    "EXECUTED",
-    "RESOLVED",
+    IncidentStage.DETECTED.value,
+    IncidentStage.PROPOSED.value,
+    IncidentStage.VALIDATED.value,
+    IncidentStage.AUTHORIZED.value,
+    IncidentStage.EXECUTED.value,
+    IncidentStage.RESOLVED.value,
 ]
 
 # Policy-driven stage gate timings — default 0 (immediate) for production
