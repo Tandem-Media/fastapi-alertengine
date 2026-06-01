@@ -21,11 +21,17 @@ AUDIT_PREFIX = "orchestrator:audit:"
 AUDIT_TTL    = 86400 * 7   # 7 days
 
 
+import redis as _redis_module
+
+_audit_redis_client = None
+
 def _redis():
-    import redis
-    url = os.getenv("REDIS_URL",
-          os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"))
-    return redis.Redis.from_url(url, decode_responses=True)
+    global _audit_redis_client
+    if _audit_redis_client is None:
+        url = os.getenv("REDIS_URL",
+              os.getenv("ALERTENGINE_REDIS_URL", "redis://localhost:6379/0"))
+        _audit_redis_client = _redis_module.Redis.from_url(url, decode_responses=True)
+    return _audit_redis_client
 
 
 def append_event(

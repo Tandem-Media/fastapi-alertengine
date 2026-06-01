@@ -84,16 +84,32 @@ STAGE_GATES = {
     "RESOLVED":   int(os.getenv("GATE_RESOLVED_S",   "0")),
 }
 
-# Allowed transitions for replay and audit validation
+# Allowed transitions — single source of truth for the state machine.
+# can_transition() uses this exclusively. Do not add parallel logic elsewhere.
+#
+# RECOVERED is a valid transition from any active stage (system-detected recovery).
+# It is encoded here explicitly — not as a special case in decide().
 ALLOWED_TRANSITIONS = {
-    None:          "DETECTED",
-    "DETECTED":    "PROPOSED",
-    "PROPOSED":    "VALIDATED",
-    "VALIDATED":   "AUTHORIZED",
-    "AUTHORIZED":  "EXECUTED",
-    "EXECUTED":    "RESOLVED",
-    "RECOVERED":   None,
-    "RESOLVED":    None,
+    None:                           IncidentStage.DETECTED.value,
+    IncidentStage.DETECTED.value:   IncidentStage.PROPOSED.value,
+    IncidentStage.PROPOSED.value:   IncidentStage.VALIDATED.value,
+    IncidentStage.VALIDATED.value:  IncidentStage.AUTHORIZED.value,
+    IncidentStage.AUTHORIZED.value: IncidentStage.EXECUTED.value,
+    IncidentStage.EXECUTED.value:   IncidentStage.RESOLVED.value,
+    IncidentStage.RECOVERED.value:  None,   # terminal
+    IncidentStage.RESOLVED.value:   None,   # terminal
+    IncidentStage.EXPIRED.value:    None,   # terminal
+    IncidentStage.FAILED.value:     None,   # terminal
+    IncidentStage.WEBHOOK_FAILED.value: None,  # terminal
+}
+
+# Stages from which RECOVERED is a valid transition (any active stage)
+RECOVERABLE_STAGES = {
+    IncidentStage.DETECTED.value,
+    IncidentStage.PROPOSED.value,
+    IncidentStage.VALIDATED.value,
+    IncidentStage.AUTHORIZED.value,
+    IncidentStage.EXECUTED.value,
 }
 
 
@@ -126,6 +142,9 @@ open_incident = new_incident
 def can_transition(incident: dict, target_stage: str) -> tuple[bool, str]:
     """
     Check if transition to target_stage is allowed.
+
+    Uses ALLOWED_TRANSITIONS as single source of truth.
+    RECOVERED is additionally allowed from any RECOVERABLE_STAGES.
     Returns (allowed: bool, reason: str).
     """
     current = incident.get("stage")
@@ -133,15 +152,24 @@ def can_transition(incident: dict, target_stage: str) -> tuple[bool, str]:
     if current == target_stage:
         return False, f"Already in {target_stage}"
 
-    if target_stage not in STAGES:
+    # Check known stage
+    all_stages = set(ALLOWED_TRANSITIONS.keys()) | set(ALLOWED_TRANSITIONS.values())
+    all_stages.discard(None)
+    if target_stage not in all_stages:
         return False, f"Unknown stage: {target_stage}"
 
-    current_idx = STAGES.index(current) if current in STAGES else -1
-    target_idx  = STAGES.index(target_stage)
+    # RECOVERED is valid from any active stage
+    if target_stage == IncidentStage.RECOVERED.value:
+        if current in RECOVERABLE_STAGES:
+            return True, "ok"
+        return False, f"Cannot recover from terminal stage {current}"
 
-    if target_stage != "RESOLVED" and target_idx != current_idx + 1:
-        return False, f"Cannot jump from {current} to {target_stage}"
+    # All other transitions must follow ALLOWED_TRANSITIONS
+    expected = ALLOWED_TRANSITIONS.get(current)
+    if expected != target_stage:
+        return False, f"Cannot transition {current} → {target_stage} (expected {expected})"
 
+    # Stage gate check
     gate = STAGE_GATES.get(target_stage, 0)
     age  = time.time() - incident.get("stage_at", time.time())
     if age < gate:
@@ -310,16 +338,12 @@ def incident_duration(incident: dict) -> float:
 
 def next_required_stage(incident: dict) -> Optional[str]:
     current = incident.get("stage")
-    if not current or current in ("RESOLVED", "RECOVERED"):
+    if not current or IncidentStage.is_terminal(current):
         return None
-    try:
-        idx = STAGES.index(current)
-    except ValueError:
+    next_stage = ALLOWED_TRANSITIONS.get(current)
+    if not next_stage:
         return None
-    if idx + 1 >= len(STAGES):
-        return None
-    next_stage = STAGES[idx + 1]
-    if next_stage in ("AUTHORIZED", "EXECUTED"):
+    if next_stage in (IncidentStage.AUTHORIZED.value, IncidentStage.EXECUTED.value):
         return None
     gate = STAGE_GATES.get(next_stage, 0)
     if stage_age(incident) >= gate:
