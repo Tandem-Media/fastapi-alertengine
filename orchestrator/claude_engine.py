@@ -214,6 +214,17 @@ def _build_prompt(
             f"Stage: {inc.get('stage', 'none')}",
         ]
 
+    # Inject commit context if available (Diff-in-Pocket)
+    if tenant_id and _has_commits and inc:
+        try:
+            import time
+            started_at = inc.get("started_at", time.time())
+            ctx = _commit_context(tenant_id, started_at)
+            if ctx:
+                lines.append(ctx)
+        except Exception as e:
+            logger.debug("Commit context failed: %s", e)
+
     return "\n".join(lines)
 
 
@@ -300,6 +311,9 @@ async def get_decision(
                 decision["confidence"] * 100,
                 decision.get("reason", ""),
             )
+
+            # Attribution — Claude is the actor, not the pipeline
+            decision["actor"] = "claude"
 
             # Record turn for multi-turn continuity
             if incident_id and _has_memory:
