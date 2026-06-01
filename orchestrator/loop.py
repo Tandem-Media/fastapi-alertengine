@@ -43,16 +43,28 @@ from notifications import (
     send_secondary_escalation,
 )
 from action_generator import generate_recovery_token
-from claude_engine import get_decision as claude_decide
+from claude_engine import get_decision as _claude_decide_single
 
-# Module-level council import — fails loud at startup if unavailable
+# Module-level council import — wraps claude_decide for backward compatibility
+# Tests that patch loop.claude_decide will still work correctly
 try:
-    from diagnostic_council import council_diagnose
+    from diagnostic_council import council_diagnose as _council_diagnose
     _has_council = True
 except Exception as e:
     logger.warning("Diagnostic council unavailable: %s", e)
     _has_council = False
-    council_diagnose = claude_decide
+    _council_diagnose = None
+
+
+async def claude_decide(health, incident=None, tenant_id="", recovery_url=""):
+    """
+    Unified decision entry point.
+    Routes to council (dual-model) when available, falls back to single model.
+    Tests can patch loop.claude_decide to override this entire function.
+    """
+    if _has_council and _council_diagnose:
+        return await _council_diagnose(health, incident, tenant_id, recovery_url)
+    return await _claude_decide_single(health, incident, tenant_id, recovery_url)
 from policy import (
     should_alert,
     should_escalate_voice,
@@ -412,8 +424,7 @@ async def _process_tenant(tenant: dict) -> None:
                     "Lease lost before Claude call | %s", tenant_id)
                 return
 
-            claude = await council_diagnose(
-                health, incident=None, tenant_id=tenant_id) if _has_council else await claude_decide(
+            claude = await claude_decide(
                 health, incident=None, tenant_id=tenant_id)
             if claude["action"] not in ("escalate", "validate"):
                 return
