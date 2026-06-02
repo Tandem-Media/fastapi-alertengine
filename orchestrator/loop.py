@@ -74,6 +74,10 @@ from policy import (
 from lock import incident_lock
 from idempotency import execute_once, make_action_id, is_executed, claim_action
 from audit import append_event
+try:
+    from incident_policy import POLICY_VERSION as _POLICY_VERSION
+except Exception:
+    _POLICY_VERSION = "unknown"
 from dlq import push as dlq_push
 from degraded import (
     current_mode, can_mutate_state, can_escalate,
@@ -477,7 +481,7 @@ async def _process_tenant(tenant: dict) -> None:
                     "diverged":      claude.get("diverged", False),
                     "diagnosis_a":   claude.get("diagnosis_a"),
                     "diagnosis_b":   claude.get("diagnosis_b"),
-                    "policy_version": "1.0.0",
+                    "policy_version": _POLICY_VERSION,
                 },
             )
 
@@ -530,7 +534,9 @@ async def _process_tenant(tenant: dict) -> None:
                     incident_id=incident_id, stage="RECOVERED",
                     decision=claude["action"], reason=decision["reason"],
                     confidence=decision["confidence"],
+                    actor=decision.get("actor", claude.get("actor", "pipeline")),
                     tenant_id=tenant_id,
+                    metadata={"policy_version": _POLICY_VERSION},
                 )
                 await _execute_actions(
                     decision["actions"], updated, health, tenant)
@@ -562,8 +568,10 @@ async def _process_tenant(tenant: dict) -> None:
             incident_id=incident_id, stage=next_stage,
             decision=claude["action"], reason=decision["reason"],
             confidence=decision["confidence"],
+            actor=decision.get("actor", claude.get("actor", "pipeline")),
             action_id=make_action_id(incident_id, next_stage, "TRANSITION"),
             tenant_id=tenant_id,
+            metadata={"policy_version": _POLICY_VERSION},
         )
 
         # Escalations
