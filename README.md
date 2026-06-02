@@ -113,10 +113,11 @@ One message. Everything you need to make a decision. Nothing executes until you 
   (replay attacks, cross-tenant isolation, concurrent token floods)
 
 **Code Transparency**
-- 11 orchestrator modules, ~2,500 lines of defensive Python
+- 17 orchestrator modules, ~3,500 lines of defensive Python
 - Every module includes graceful degradation and never-raises guarantees
+- Every README claim verified against source code — zero stubs, zero aspirational features
+- Complete actor attribution: policy · claude · engineer · orchestrator
 - Source-available for independent security audit — see `LICENSE-ORCHESTRATOR.md`
-- Every README claim is backed by source code in `orchestrator/`
 
 ---
 
@@ -196,7 +197,17 @@ Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
                                           every stage · every actor · replayable
 ```
 
-**The real moat is not the AI.** It is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions. That is harder to replicate than metrics collection.
+**The real moat is not the AI.** It is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward.
+
+Every design principle is enforced by code and provable by audit:
+
+| Principle | Enforcement |
+|-----------|-------------|
+| Policy decides incidents, not AI | `should_recover()` in `pipeline.py` sets `actor="policy"` |
+| AI explains, humans authorize | Claude generates message; JWT gates execution |
+| Nothing executes without approval | `POST /action/recover/confirm` requires valid JWT |
+| Every action logged immutably | `append_event()` on every transition, every actor |
+| Deterministic alert rules | `incident_policy.py` — single versioned POLICY dict |
 
 ---
 
