@@ -112,6 +112,12 @@ One message. Everything you need to make a decision. Nothing executes until you 
 - Adversarial audit by autonomous AI agent: 10/10 passed
   (replay attacks, cross-tenant isolation, concurrent token floods)
 
+**Code Transparency**
+- 11 orchestrator modules, ~2,500 lines of defensive Python
+- Every module includes graceful degradation and never-raises guarantees
+- Source-available for independent security audit — see `LICENSE-ORCHESTRATOR.md`
+- Every README claim is backed by source code in `orchestrator/`
+
 ---
 
 ## Install + Quickstart
