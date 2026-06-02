@@ -240,6 +240,8 @@ def decide(incident: dict, health: dict, claude: dict) -> dict:
         err        = health.get("metrics", {}).get("error_rate", 0)
 
         # Recovery check — uses incident_policy thresholds
+        # actor="policy" makes the override auditable:
+        # the audit log will show policy overrode Claude, not Claude decided
         if should_recover(score, err):
             return {
                 "next_stage":  "RECOVERED",
@@ -247,6 +249,7 @@ def decide(incident: dict, health: dict, claude: dict) -> dict:
                                  "payload": {"type": "RECOVERY"}}],
                 "reason":      reason or "System metrics recovered",
                 "confidence":  confidence,
+                "actor":       "policy",  # policy is the floor, AI is the ceiling
             }
 
         next_stage = ALLOWED_TRANSITIONS.get(stage)

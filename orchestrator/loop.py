@@ -470,12 +470,14 @@ async def _process_tenant(tenant: dict) -> None:
                 incident_id=incident_id, stage="DETECTED",
                 decision=claude["action"], reason=decision["reason"],
                 confidence=decision["confidence"],
+                actor=decision.get("actor", claude.get("actor", "pipeline")),
                 tenant_id=tenant_id,
                 metadata={
                     "council_mode":  claude.get("mode", "single"),
                     "diverged":      claude.get("diverged", False),
                     "diagnosis_a":   claude.get("diagnosis_a"),
                     "diagnosis_b":   claude.get("diagnosis_b"),
+                    "policy_version": "1.0.0",
                 },
             )
 
