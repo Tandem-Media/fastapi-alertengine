@@ -113,10 +113,11 @@ One message. Everything you need to make a decision. Nothing executes until you 
   (replay attacks, cross-tenant isolation, concurrent token floods)
 
 **Code Transparency**
-- 11 orchestrator modules, ~2,500 lines of defensive Python
+- 17 orchestrator modules, ~3,500 lines of defensive Python
 - Every module includes graceful degradation and never-raises guarantees
+- Every README claim verified against source code — zero stubs, zero aspirational features
+- Complete actor attribution: policy · claude · engineer · orchestrator
 - Source-available for independent security audit — see `LICENSE-ORCHESTRATOR.md`
-- Every README claim is backed by source code in `orchestrator/`
 
 ---
 
@@ -196,7 +197,17 @@ Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
                                           every stage · every actor · replayable
 ```
 
-**The real moat is not the AI.** It is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions. That is harder to replicate than metrics collection.
+**The real moat is not the AI.** It is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward.
+
+Every design principle is enforced by code and provable by audit:
+
+| Principle | Enforcement |
+|-----------|-------------|
+| Policy decides incidents, not AI | `should_recover()` in `pipeline.py` sets `actor="policy"` |
+| AI explains, humans authorize | Claude generates message; JWT gates execution |
+| Nothing executes without approval | `POST /action/recover/confirm` requires valid JWT |
+| Every action logged immutably | `append_event()` on every transition, every actor |
+| Deterministic alert rules | `incident_policy.py` — single versioned POLICY dict |
 
 ---
 
@@ -335,15 +346,54 @@ Set up via GitHub webhook → `POST /commits/webhook`.
 
 | Tier | Price | Services | Incidents/mo | Channels |
 |------|-------|----------|--------------|----------|
-| Hobby | $19/mo | 1 | 5 | Telegram only |
-| Developer | $99/mo | 1 | 10 | WhatsApp |
-| Solo | $299/mo | 3 | 50 | WhatsApp + Telegram |
-| Startup | $799/mo | 10 | 200 | WhatsApp + Telegram + Slack |
-| Scale | $1,500/mo | 20 | 1,000 | All channels + Voice escalation |
-| Enterprise | Custom | Custom | Custom | Custom + dedicated deployment |
+| **Free** | $0 | — | — | SDK only |
+| **Starter** | $19/mo | 1 | 5 | Telegram |
+| **Growth** | $99/mo | 1 | 10 | WhatsApp + AI diagnosis |
+| **Team** | $299/mo | 3 | 50 | WhatsApp + Telegram + Council |
+| **Compliance** | $799/mo | 10 | 200 | + Slack + DLQ + Voice + Audit export |
+| **Platform** | $1,500/mo | 20 | 1,000 | All channels + Custom policy thresholds |
+| **Enterprise** | Custom | Unlimited | Unlimited | Dedicated deployment + Custom SLA |
 
-> Enterprise "dedicated deployment" means a separate managed instance
-> hosted by Tandem Media under a dedicated SLA — not self-hosted.
+### What each tier actually buys you
+
+**Free — $0**
+Detection SDK. MIT licensed. Runs on your servers. P95 tracking, health score, anomaly detection.
+*The catch: You see the score drop. You don't know why. You don't get alerts. You don't get recovery links. That's the orchestrator.*
+
+**Starter — $19/mo**
+Your first production app. Telegram alerts. Basic detection.
+*One hour of downtime costs more than a year of Starter.*
+Best for: Pre-revenue founders, indie hackers, first production deployment.
+
+**Growth — $99/mo**
+AI diagnosis. WhatsApp. Actionable alerts. No noise.
+Claude diagnoses root cause in plain English. Confidence-gated — suppresses noise below 60%. Diff-in-Pocket commit correlation included.
+*One false-positive 3 AM alert costs more than a month of Growth.*
+Best for: Seed-stage teams, solo developers with revenue, first on-call rotation.
+
+**Team — $299/mo**
+Multi-service. Full channels. Diagnostic Council.
+3 services, 50 incidents, WhatsApp + Telegram. Dual-model AI — two models reason independently. Dissent alerts when models disagree.
+*$6 per incident for AI diagnosis + human authorization + audit trail.*
+Best for: Solo founders with revenue ($5K–$50K MRR), consultants managing multiple client apps.
+
+**Compliance — $799/mo**
+SOC 2 ready. DLQ. Voice escalation. Team transparency.
+10 services, 200 incidents. Slack integration, Dead Letter Queue, voice escalation after 180s, full audit trail export, policy version tracking.
+*SOC 2 Type II audit costs $15,000–$50,000. Compliance is $799/month — insurance against that delay.*
+Best for: Series A fintech, healthtech approaching HIPAA, any team where auditors ask "who approved that?"
+
+**Platform — $1,500/mo**
+Custom policy thresholds. 20 services. Enterprise-grade.
+Custom POLICY_RECOVER_SCORE, POLICY_VALIDATE_ERROR_RATE adapted to your baselines. Custom webhook routing. Priority support (24-hour response).
+*Generic thresholds don't work at scale — your P95 normal might be 200ms, not 120ms.*
+Best for: Multi-team platforms, African fintech with 100K+ users, teams with established operational baselines.
+
+**Enterprise — Custom**
+Dedicated deployment. Custom SLA. Procurement-ready.
+Unlimited services and incidents. Dedicated managed instance. Data residency options. Annual contracts, POs, vendor security questionnaires. White-glove onboarding.
+*Enterprise monitoring contracts run $50,000–$500,000/year. AlertEngine Enterprise is a fraction of that, with human authorization and audit trails they don't have.*
+Best for: Banks, insurance companies, health systems, government agencies, African CBDC infrastructure.
 
 ---
 
@@ -477,13 +527,37 @@ overwhelm the system with concurrent requests.
 pip install fastapi-alertengine
 ```
 
-**Managed orchestrator (Developer — $99/mo):**
+**Managed orchestrator (Growth — $99/mo):**
 Contact: anchorflowalertengine@outlook.com
+
+Ready for accountable incident response? We'll configure your policy file, webhook, and first tenant.
 
 **Full technical architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 **Upwork:**
 [Human-authorized incident recovery for FastAPI](https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104)
+
+---
+
+## FAQ
+
+**Can I self-host the orchestrator?**
+No. The orchestrator is source-available for audit, hosted and managed by Tandem Media. Enterprise gets a dedicated deployment under a custom SLA.
+
+**What happens if Claude is unavailable?**
+The system fails safe — falls back to deterministic policy rules. The audit log records `actor: "policy"`. No silent failures.
+
+**What happens if my recovery webhook is down?**
+The orchestrator retries 3 times with exponential backoff. On failure, the incident is captured in the Dead Letter Queue for manual replay. Available on Compliance tier and above.
+
+**Can I start free and upgrade?**
+Yes. `pip install fastapi-alertengine` is MIT licensed and never expires. The free SDK runs forever on your servers. Upgrade to a managed tier whenever you need alerts and diagnosis.
+
+**Is the audit trail really immutable?**
+Yes. `audit.py` uses Redis LIST with `rpush` — append only, never mutated. Every event includes actor, stage, confidence, reason, and policy version. Replay reconstructs state from events, not from stored state.
+
+**How does pricing work if I exceed my incident quota?**
+Growth and Starter: no overage — incidents are silently counted but not billed beyond quota (upgrade required for more). Team: $0.10/incident over 50. Compliance: $0.05/incident over 200. Platform: $0.02/incident over 1,000.
 
 ---
 
