@@ -1,20 +1,21 @@
 # FastAPI AlertEngine
 
-**A compliance-oriented incident command system for FastAPI.**
+**Production infrastructure with financial-grade authorization.**
 
-> **AI explains. Humans authorize. The system proves.**
+> **Authorized. Audited. Replayable.**
+
+[![PyPI](https://img.shields.io/pypi/v/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
+[![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://github.com/Tandem-Media/fastapi-alertengine/actions/workflows/ci.yml/badge.svg)](https://github.com/Tandem-Media/fastapi-alertengine/actions)
+[![Adversarial Audit](https://img.shields.io/badge/Adversarial%20Audit-10%2F10-brightgreen)](https://github.com/Tandem-Media/fastapi-alertengine#adversarial-audit)
+[![Category: Operational Governance](https://img.shields.io/badge/Category-Operational%20Governance-blue)](https://github.com/Tandem-Media/fastapi-alertengine)
 
 Deterministic detection. AI-assisted diagnosis. Human authorization. Immutable audit trail.
 
 Nothing executes without your explicit approval. Every action is logged and replayable.
 
 **Nothing runs on your servers except the free SDK middleware.**
-
-[![PyPI](https://img.shields.io/pypi/v/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
-[![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://github.com/Tandem-Media/fastapi-alertengine/actions/workflows/ci.yml/badge.svg)](https://github.com/Tandem-Media/fastapi-alertengine/actions)
-[![RepoRanker](https://reporanker.com/badge/Tandem-Media/fastapi-alertengine)](https://reporanker.com/repos/Tandem-Media/fastapi-alertengine)
 
 ---
 
@@ -196,6 +197,63 @@ Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
                                         Immutable audit log
                                           every stage · every actor · replayable
 ```
+
+## Architecture & Auditability
+
+AlertEngine treats every incident as a **transaction** — not a notification. Like a financial ledger, every stage is recorded with an immutable audit entry showing the actor, timestamp, and policy version.
+
+```mermaid
+stateDiagram-v2
+    [*] --> DETECTED: Policy gates pass
+    DETECTED --> PROPOSED: Claude diagnoses
+    PROPOSED --> VALIDATED: Recovery link generated
+    VALIDATED --> AUTHORIZED: Engineer taps approve
+    AUTHORIZED --> EXECUTED: Webhook called
+    EXECUTED --> RESOLVED: Recovery confirmed
+    RESOLVED --> [*]: Audit log closed
+
+    DETECTED --> RECOVERED: Policy override (actor="policy")
+    PROPOSED --> RECOVERED: System health restored
+    VALIDATED --> EXPIRED: JWT TTL exceeded
+    EXECUTED --> RECOVERED: System health restored
+    AUTHORIZED --> WEBHOOK_FAILED: 3 retries exhausted → DLQ
+
+    RECOVERED --> [*]: Audit log closed
+    VALIDATED --> [*]: Human veto
+    DETECTED --> [*]: Policy reject
+
+    note right of DETECTED
+        Policy decides: should_alert()
+        AI does not open incidents
+    end note
+
+    note right of AUTHORIZED
+        JWT: tenant-scoped, 5-min TTL, single-use
+        Atomic SET NX prevents replay
+    end note
+
+    note right of RESOLVED
+        Audit entry: actor, timestamp,
+        policy_version, decision, reason
+    end note
+```
+
+**Actor attribution on every transition:**
+
+| Actor | When | Example |
+|-------|------|---------|
+| `policy` | Hard thresholds override AI | `should_recover()` → RECOVERED |
+| `claude` | AI diagnosis and recommendation | "Database connection pool exhausted" |
+| `engineer` | Human authorization | Taps "Approve" on WhatsApp |
+| `orchestrator` | State machine execution | Webhook called, transition applied |
+
+Every transition is logged with actor, confidence, reason, and policy version.
+State is derived from events — not stored as truth.
+Redis loss → full replay from the audit ledger.
+
+**Why this matters for compliance:** "The system fixed itself" is not an acceptable answer. AlertEngine produces: "Engineer X authorized action Y at time Z under policy version W."
+
+---
 
 **The real moat is not the AI.** It is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward.
 
