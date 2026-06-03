@@ -3,12 +3,19 @@
 Plan definitions and tenant plan lookup.
 
 Plans (in ascending order):
-  hobby      — entry tier, 1 service, 5 incidents/month, Telegram, no AI decisions
-  developer  — developer tier, 1 service, 10 incidents/month, WhatsApp, AI decisions
-  solo       — free tier, 1 service, 50 incidents/month, no DLQ, no voice escalation
-  startup    — 5 services, 200 incidents/month, DLQ + voice escalation
-  teams      — 20 services, 1000 incidents/month, full feature set
-  enterprise — unlimited services and incidents, full feature set
+  starter    — $19/mo, 1 service, 5 incidents/month, Telegram only
+  growth     — $99/mo, 1 service, 10 incidents/month, WhatsApp + AI diagnosis
+  team       — $299/mo, 3 services, 50 incidents/month, WhatsApp + Telegram + Council
+  compliance — $799/mo, 10 services, 200 incidents/month, + Slack + DLQ + Voice
+  platform   — $1,500/mo, 20 services, 1,000 incidents/month, custom thresholds
+  enterprise — Custom, unlimited services and incidents
+
+Legacy aliases (backward compatibility for existing tenants):
+  hobby      → starter
+  developer  → growth
+  solo       → team
+  startup    → compliance
+  scale      → platform
 """
 
 import copy
@@ -18,11 +25,25 @@ from typing import Literal, Dict
 from pydantic import BaseModel
 
 
-PlanName = Literal["hobby", "developer", "solo", "startup", "scale", "teams", "enterprise"]
+PlanName = Literal[
+    "starter", "growth", "team", "compliance", "platform", "enterprise",
+    # Legacy aliases — kept for backward compatibility
+    "hobby", "developer", "solo", "startup", "scale", "teams",
+]
+
+# Maps legacy plan names to new names
+PLAN_ALIASES = {
+    "hobby":     "starter",
+    "developer": "growth",
+    "solo":      "team",
+    "startup":   "compliance",
+    "scale":     "platform",
+    "teams":     "platform",
+}
 
 
 class TenantPlan(BaseModel):
-    name: PlanName
+    name: str
     max_services: int               # -1 = unlimited
     included_incidents: int         # -1 = unlimited
     overage_fee_per_incident: float
@@ -35,8 +56,8 @@ class TenantPlan(BaseModel):
 
 
 PLANS: Dict[str, TenantPlan] = {
-    "hobby": TenantPlan(
-        name="hobby",
+    "starter": TenantPlan(
+        name="starter",
         max_services=1,
         included_incidents=5,
         overage_fee_per_incident=0.0,
@@ -47,8 +68,8 @@ PLANS: Dict[str, TenantPlan] = {
         has_custom_thresholds=False,
         has_slack=False,
     ),
-    "developer": TenantPlan(
-        name="developer",
+    "growth": TenantPlan(
+        name="growth",
         max_services=1,
         included_incidents=10,
         overage_fee_per_incident=0.0,
@@ -59,22 +80,21 @@ PLANS: Dict[str, TenantPlan] = {
         has_custom_thresholds=False,
         has_slack=False,
     ),
-    "solo": TenantPlan(
-        # Sent.dm recommended for solo tier — zero friction onboarding
-        name="solo",
-        max_services=1,
+    "team": TenantPlan(
+        name="team",
+        max_services=3,
         included_incidents=50,
         overage_fee_per_incident=0.10,
-        default_provider="sent",
+        default_provider="whatsapp",
         has_dlq_access=False,
         has_claude_decision=True,
         has_voice_escalation=False,
         has_custom_thresholds=False,
         has_slack=False,
     ),
-    "startup": TenantPlan(
-        name="startup",
-        max_services=5,
+    "compliance": TenantPlan(
+        name="compliance",
+        max_services=10,
         included_incidents=200,
         overage_fee_per_incident=0.05,
         default_provider="whatsapp",
@@ -84,20 +104,8 @@ PLANS: Dict[str, TenantPlan] = {
         has_custom_thresholds=False,
         has_slack=True,
     ),
-    "scale": TenantPlan(
-        name="scale",
-        max_services=20,
-        included_incidents=1000,
-        overage_fee_per_incident=0.02,
-        default_provider="whatsapp",
-        has_dlq_access=True,
-        has_claude_decision=True,
-        has_voice_escalation=True,
-        has_custom_thresholds=True,
-        has_slack=True,
-    ),
-    "teams": TenantPlan(
-        name="teams",
+    "platform": TenantPlan(
+        name="platform",
         max_services=20,
         included_incidents=1000,
         overage_fee_per_incident=0.02,
@@ -122,12 +130,13 @@ PLANS: Dict[str, TenantPlan] = {
     ),
 }
 
-DEFAULT_PLAN = "solo"
+DEFAULT_PLAN = "team"
 
 
 def get_plan(plan_name: str) -> TenantPlan:
-    """Return plan by name. Falls back to solo if unknown."""
-    return PLANS.get(plan_name, PLANS[DEFAULT_PLAN])
+    """Return plan by name. Resolves legacy aliases. Falls back to team if unknown."""
+    resolved = PLAN_ALIASES.get(plan_name, plan_name)
+    return PLANS.get(resolved, PLANS[DEFAULT_PLAN])
 
 
 def get_tenant_plan(tenant: dict) -> TenantPlan:
@@ -164,7 +173,6 @@ def increment_incident_count(tenant: dict) -> dict:
     Caller is responsible for persisting via save_tenant() if needed.
     """
     tenant = copy.deepcopy(tenant)
-    # Support both field names for backwards compatibility
     count = tenant.get("incident_count", tenant.get("incidents_this_month", 0))
     tenant["incident_count"]      = count + 1
     tenant["incidents_this_month"] = count + 1
