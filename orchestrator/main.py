@@ -299,7 +299,8 @@ async def recover_action(token: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Internal error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @health_app.post("/action/recover/confirm")
@@ -456,7 +457,8 @@ async def recover_action_confirm(token: str):
         raise
     except Exception as e:
         logger.error("recover_action_confirm error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Internal error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 
@@ -533,7 +535,8 @@ async def github_webhook(request: Request):
 
     except Exception as e:
         logger.error("Commit webhook error: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("Bad request: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid request")
 
 
 @health_app.post("/commits/{tenant_id}", include_in_schema=True, tags=["commits"])
@@ -572,7 +575,8 @@ async def store_commit_manual(tenant_id: str, request: Request):
         )
         return {"stored": True, "tenant_id": tenant_id}
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.warning("Bad request: %s", e)
+        raise HTTPException(status_code=400, detail="Invalid request")
 
 
 @health_app.get("/commits/{tenant_id}", include_in_schema=True, tags=["commits"])
@@ -584,7 +588,8 @@ async def get_commits(tenant_id: str, limit: int = 10):
         commits = get_recent_commits(tenant_id, time.time(), limit=limit)
         return {"tenant_id": tenant_id, "commits": commits, "count": len(commits)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("Internal error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def _run_loop_safe():

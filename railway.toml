@@ -1,3 +1,12 @@
+# Root railway.toml — deploys the example FastAPI app with SDK instrumentation
+# This is for demo/testing purposes only.
+#
+# To deploy the ORCHESTRATOR (managed service), use:
+#   orchestrator/railway.toml
+#
+# The orchestrator is the paid managed layer — not intended for self-hosting.
+# See LICENSE-ORCHESTRATOR.md
+
 [build]
 builder = "nixpacks"
 

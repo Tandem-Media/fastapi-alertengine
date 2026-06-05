@@ -22,6 +22,27 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+
+# Safe fields that can be returned to clients — never includes secrets
+_SAFE_TENANT_FIELDS = {
+    "tenant_id", "plan", "status", "health_url",
+    "notification_channel", "created_at", "last_updated",
+    "incident_count", "service_count", "whatsapp_numbers",
+    "telegram_chat_id", "slack_channel",
+    "recovery_webhook_url",  # OK — this is the customer's own webhook
+}
+
+_SECRET_FIELDS = {
+    "twilio_auth_token", "twilio_account_sid", "twilio_whatsapp_from",
+    "sent_api_key", "sent_phone_id", "slack_webhook_url",
+    "telegram_bot_token", "alert_secret", "api_key",
+}
+
+
+def _safe_tenant(tenant: dict) -> dict:
+    """Strip all secret fields before returning tenant data to clients."""
+    return {k: v for k, v in tenant.items() if k not in _SECRET_FIELDS}
+
 from tenants import (
     create_tenant,
     get_tenant,
@@ -179,7 +200,11 @@ def onboard(req: OnboardRequest):
                 sent.append(number)
             else:
                 failed.append(number)
-                logger.warning("Verification code for %s: %s (send failed — log only)", number, code)
+                logger.warning(
+                    "Verification delivery failed for tenant, phone ending %s — "
+                    "code not logged for security. Retry or use manual verification.",
+                    number[-4:] if number and len(number) >= 4 else "****"
+                )
 
     if req.sent_api_key or effective_channel == "sent":
         notification_config = "sent"
@@ -249,7 +274,7 @@ def get_tenant_status(tenant_id: str):
     tenant = get_tenant(tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
+    return _safe_tenant(tenant)  # Never return secrets to clients
 
 
 @router.get("/tenant/{tenant_id}/contacts")
