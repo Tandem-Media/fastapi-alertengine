@@ -67,6 +67,7 @@ def _check_redis() -> tuple[bool, str]:
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
+from typing import Optional
 import uvicorn
 
 
