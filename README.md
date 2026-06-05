@@ -182,68 +182,38 @@ curl -s localhost:8000/health/alerts | python3 -m json.tool
 
 ---
 
-## Architecture
+## Architecture & Auditability
 
 ```
 Your servers                          Tandem Media servers
 ─────────────────────────────────     ──────────────────────────────────────
 FastAPI app                           Orchestrator (polls every 5s)
   instrument(app)                       ↓ policy gates (deterministic)
-  ↓                                   ↓ Claude AI diagnosis (advisory only)
+  ↓                                   ↓ AI diagnosis (advisory only)
 Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
   append-only        P95 · score        WhatsApp / Telegram alert
-  event log          · trend              AI diagnosis · recovery link
+  event log          · trend              diagnosis · recovery link
                                           single-use JWT · 5 min TTL
                                           ↓ engineer taps approve
                                         POST /action/recover/confirm
                                           ↓ 3 retries · exponential backoff
-                                        Your recovery webhook ←── you control this
+                                        Your recovery webhook
                                           ↓
                                         Immutable audit log
                                           every stage · every actor · replayable
 ```
 
-## Architecture & Auditability
-
 AlertEngine treats every incident as a **transaction** — not a notification. Like a financial ledger, every stage is recorded with an immutable audit entry showing the actor, timestamp, and policy version.
 
-> If the diagram below does not render, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full state machine.
-
-```mermaid
-stateDiagram-v2
-    [*] --> DETECTED: Policy gates pass
-    DETECTED --> PROPOSED: Claude diagnoses
-    PROPOSED --> VALIDATED: Recovery link generated
-    VALIDATED --> AUTHORIZED: Engineer taps approve
-    AUTHORIZED --> EXECUTED: Webhook called
-    EXECUTED --> RESOLVED: Recovery confirmed
-    RESOLVED --> [*]: Audit log closed
-
-    DETECTED --> RECOVERED: Policy override (actor="policy")
-    PROPOSED --> RECOVERED: System health restored
-    VALIDATED --> EXPIRED: JWT TTL exceeded
-    EXECUTED --> RECOVERED: System health restored
-    AUTHORIZED --> WEBHOOK_FAILED: 3 retries exhausted → DLQ
-
-    RECOVERED --> [*]: Audit log closed
-    VALIDATED --> [*]: Human veto
-    DETECTED --> [*]: Policy reject
-
-    note right of DETECTED
-        Policy decides: should_alert()
-        AI does not open incidents
-    end note
-
-    note right of AUTHORIZED
-        JWT: tenant-scoped, 5-min TTL, single-use
-        Atomic SET NX prevents replay
-    end note
-
-    note right of RESOLVED
-        Audit entry: actor, timestamp,
-        policy_version, decision, reason
-    end note
 ```
+[*] ──→ DETECTED ──→ PROPOSED ──→ VALIDATED ──→ AUTHORIZED ──→ EXECUTED ──→ RESOLVED ──→ [*]
+             │              │             │                                    │
+             └──────────────┴─────────────┴── RECOVERED ──→ [*]  (policy override)
+                                          │
+                                          └── EXPIRED (JWT TTL)     WEBHOOK_FAILED ──→ DLQ
+```
+
+Full state machine with transition guards: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 **Actor attribution on every transition:**
 
@@ -262,7 +232,7 @@ Redis loss → full replay from the audit ledger.
 
 ---
 
-**The moat is the governance layer** ensuring that even when AI is uncertain, the human sees the uncertainty before acting. `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow together create a system that can explain, authorize, execute, and prove operational decisions afterward — with or without AI involvement.
+**The moat is the governance layer:** `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward — with or without AI involvement.
 
 Every design principle is enforced by code and provable by audit:
 
@@ -596,8 +566,8 @@ Ready for accountable incident response? We'll configure your policy file, webho
 
 **Full technical architecture:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
-**Upwork:**
-[Human-authorized incident recovery for FastAPI](https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104)
+**Need a custom integration or white-glove onboarding?**
+[Available on Upwork](https://www.upwork.com/services/product/development-it-24-hour-stability-audit-and-an-active-recovery-system-for-instant-control-2042520713072042104)
 
 ---
 
