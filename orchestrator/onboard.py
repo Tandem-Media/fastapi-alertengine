@@ -91,6 +91,12 @@ def _send_verification_whatsapp(phone: str, code: str) -> bool:
         return False
 
 
+def _require_admin_key(admin_key: str) -> None:
+    expected_key = os.getenv("ADMIN_KEY")
+    if not expected_key or admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 async def _send_welcome_message(tenant: dict, phone: str) -> None:
     """Send a welcome message via the tenant's configured notification provider."""
     try:
@@ -245,15 +251,29 @@ def verify(req: VerifyRequest):
 
 
 @router.get("/tenant/{tenant_id}")
-def get_tenant_status(tenant_id: str):
+def get_tenant_status(tenant_id: str, admin_key: str):
+    _require_admin_key(admin_key)
     tenant = get_tenant(tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
+    sanitized = {
+        "tenant_id": tenant.get("tenant_id"),
+        "service_name": tenant.get("service_name"),
+        "health_url": tenant.get("health_url"),
+        "status": tenant.get("status"),
+        "notification_channel": tenant.get("notification_channel"),
+        "plan": tenant.get("plan"),
+        "created_at": tenant.get("created_at"),
+        "last_updated": tenant.get("last_updated"),
+        "incident_count": tenant.get("incident_count"),
+        "incidents_this_month": tenant.get("incidents_this_month"),
+    }
+    return sanitized
 
 
 @router.get("/tenant/{tenant_id}/contacts")
-def get_tenant_contacts(tenant_id: str):
+def get_tenant_contacts(tenant_id: str, admin_key: str):
+    _require_admin_key(admin_key)
     tenant = get_tenant(tenant_id)
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")

@@ -334,7 +334,7 @@ def _noop(reason: str, confidence: float) -> dict:
 
 
 def is_terminal(incident: dict) -> bool:
-    return incident.get("stage") in ("RESOLVED", "RECOVERED")
+    return IncidentStage.is_terminal(incident.get("stage"))
 
 
 def stage_age(incident: dict) -> float:

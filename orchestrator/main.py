@@ -5,7 +5,9 @@ Exposes health + onboarding API. Starts multi-tenant loop.
 """
 
 import asyncio
+import hashlib
 import html
+import hmac
 import logging
 import os
 import time
@@ -63,6 +65,12 @@ def _check_redis() -> tuple[bool, str]:
         return True, "connected"
     except Exception as e:
         return False, str(e)
+
+
+def _require_admin_key(admin_key: str) -> None:
+    expected_key = os.getenv("ADMIN_KEY")
+    if not expected_key or admin_key != expected_key:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 from contextlib import asynccontextmanager
@@ -150,9 +158,7 @@ def status():
 
 @health_app.get("/admin/tenants")
 def admin_tenants(admin_key: str):
-    expected_key = os.getenv("ADMIN_KEY")
-    if not expected_key or admin_key != expected_key:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    _require_admin_key(admin_key)
 
     try:
         from tenants import list_active_tenants
@@ -479,8 +485,27 @@ async def github_webhook(request: Request):
     try:
         from commit_context import store_commit
         import time
+        import json
 
-        body = await request.json()
+        secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+        if not secret:
+            raise HTTPException(
+                status_code=503,
+                detail="GITHUB_WEBHOOK_SECRET not configured",
+            )
+
+        raw_body = await request.body()
+        signature = request.headers.get("X-Hub-Signature-256", "")
+        expected_sig = "sha256=" + hmac.new(
+            secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+
+        if not signature or not hmac.compare_digest(signature, expected_sig):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+        body = json.loads(raw_body or b"{}")
 
         # GitHub push event format
         repo   = body.get("repository", {}).get("full_name", "")
@@ -537,7 +562,7 @@ async def github_webhook(request: Request):
 
 
 @health_app.post("/commits/{tenant_id}", include_in_schema=True, tags=["commits"])
-async def store_commit_manual(tenant_id: str, request: Request):
+async def store_commit_manual(tenant_id: str, request: Request, admin_key: str):
     """
     Manually push a commit to AlertEngine for correlation.
     Use this if you prefer not to set up a GitHub webhook.
@@ -554,6 +579,7 @@ async def store_commit_manual(tenant_id: str, request: Request):
         }
     """
     try:
+        _require_admin_key(admin_key)
         from commit_context import store_commit
         import time
 
@@ -576,9 +602,10 @@ async def store_commit_manual(tenant_id: str, request: Request):
 
 
 @health_app.get("/commits/{tenant_id}", include_in_schema=True, tags=["commits"])
-async def get_commits(tenant_id: str, limit: int = 10):
+async def get_commits(tenant_id: str, admin_key: str, limit: int = 10):
     """List recent stored commits for a tenant."""
     try:
+        _require_admin_key(admin_key)
         from commit_context import get_recent_commits
         import time
         commits = get_recent_commits(tenant_id, time.time(), limit=limit)
