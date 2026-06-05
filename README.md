@@ -1,8 +1,10 @@
 # FastAPI AlertEngine
 
-**Production infrastructure with financial-grade authorization.**
+**Human-authorized incident recovery for production APIs.**
 
 > **Authorized. Audited. Replayable.**
+
+*Production infrastructure with financial-grade authorization discipline — without the certification overhead.*
 
 [![PyPI](https://img.shields.io/pypi/v/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
 [![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
@@ -11,7 +13,7 @@
 [![Adversarial Audit](https://img.shields.io/badge/Adversarial%20Audit-10%2F10-brightgreen)](https://github.com/Tandem-Media/fastapi-alertengine#adversarial-audit)
 [![Category: Operational Governance](https://img.shields.io/badge/Category-Operational%20Governance-blue)](https://github.com/Tandem-Media/fastapi-alertengine)
 
-Deterministic detection. AI-assisted diagnosis. Human authorization. Immutable audit trail.
+Deterministic detection. Adversarial AI diagnosis. Human authorization. Immutable audit trail.
 
 Nothing executes without your explicit approval. Every action is logged and replayable.
 
@@ -74,6 +76,7 @@ Recent deployment:
 3 minutes ago — a1b2c3d
 "Fix checkout query isolation level" (John, +12/-3)
 ⚠️ This commit touched database/query files
+*(Requires GitHub webhook — POST /commits/webhook)*
 
 Suggested fix:
 Restart checkout worker pool
@@ -84,6 +87,8 @@ Confidence: 87%
 ```
 
 One message. Everything you need to make a decision. Nothing executes until you tap approve.
+
+> If the two AI models **disagree**, you receive a Dissent Alert instead — two competing theories, confidence scores, and specific logs to check before approving. See [Diagnostic Council](#diagnostic-council) below.
 
 ---
 
@@ -117,7 +122,7 @@ One message. Everything you need to make a decision. Nothing executes until you 
 - 17 orchestrator modules, ~3,500 lines of defensive Python
 - Every module includes graceful degradation and never-raises guarantees
 - Every README claim verified against source code — zero stubs, zero aspirational features
-- Complete actor attribution: policy · claude · engineer · orchestrator
+- Complete actor attribution: policy · diagnosis · engineer · orchestrator
 - Source-available for independent security audit — see `LICENSE-ORCHESTRATOR.md`
 
 ---
@@ -202,6 +207,8 @@ Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
 
 AlertEngine treats every incident as a **transaction** — not a notification. Like a financial ledger, every stage is recorded with an immutable audit entry showing the actor, timestamp, and policy version.
 
+> If the diagram below does not render, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full state machine.
+
 ```mermaid
 stateDiagram-v2
     [*] --> DETECTED: Policy gates pass
@@ -255,7 +262,7 @@ Redis loss → full replay from the audit ledger.
 
 ---
 
-**The real moat is not the AI.** It is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward.
+**The moat is the governance layer** ensuring that even when AI is uncertain, the human sees the uncertainty before acting. `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow together create a system that can explain, authorize, execute, and prove operational decisions afterward — with or without AI involvement.
 
 Every design principle is enforced by code and provable by audit:
 
@@ -455,18 +462,15 @@ Best for: Banks, insurance companies, health systems, government agencies, Afric
 
 ---
 
-## Built in Zimbabwe
+## Built in Zimbabwe 🇿🇼
 
-Engineers here aren't always at laptops when things break.
-WhatsApp is the operational control plane.
+Engineers here aren't always at laptops when things break. WhatsApp is the operational control plane.
 
-That constraint produced something better than a dashboard ever could:
-alerts that find you, rather than dashboards you have to find.
+That constraint produced something better than a dashboard ever could: alerts that find you, rather than dashboards you have to find.
 
-I spent my career in accounting and finance before building AlertEngine.
-In finance, no transaction executes without authorization and every
-action leaves an audit trail. AlertEngine applies that same discipline
-to production infrastructure.
+**The accounting parallel:** I spent my career in finance before building AlertEngine. In accounting, no transaction executes without authorization and every action leaves an audit trail. AlertEngine applies that same discipline to production infrastructure — every incident is a transaction, every approval is a ledger entry, every recovery is a reconciliation.
+
+This is not a monitoring tool that grew up. It is a governance system designed from first principles.
 
 ---
 
