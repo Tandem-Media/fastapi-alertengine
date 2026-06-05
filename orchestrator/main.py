@@ -462,6 +462,46 @@ async def recover_action_confirm(token: str):
 
 
 
+# ── Auditor's One-Pager: PDF audit report ─────────────────────────────────────
+
+@health_app.get("/audit/{incident_id}/report", tags=["audit"])
+async def incident_audit_report(incident_id: str, tenant_id: Optional[str] = None):
+    """
+    Generate a PDF audit report for an incident.
+
+    Returns a professional PDF containing:
+    - Incident summary (ID, tenant, plan, policy version)
+    - Complete audit trail with actor attribution
+    - AI diagnosis and reasoning detail
+    - Active policy thresholds at time of incident
+    - Attestation statement for auditors
+
+    Usage:
+        curl -o report.pdf "https://your-orchestrator/audit/{incident_id}/report?tenant_id={tenant_id}"
+
+    The PDF is designed to be handed directly to SOC 2, PCI DSS,
+    HIPAA, or internal compliance auditors.
+    """
+    try:
+        from audit_report import generate_incident_report
+        from fastapi.responses import Response
+
+        pdf_bytes = generate_incident_report(incident_id, tenant_id)
+
+        filename = f"alertengine-audit-{incident_id}.pdf"
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(pdf_bytes)),
+            }
+        )
+    except Exception as e:
+        logger.error("Audit report generation failed for %s: %s", incident_id, e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 # ── Diff-in-Pocket: Git commit webhook ────────────────────────────────────────
 
 @health_app.post("/commits/webhook", include_in_schema=True, tags=["commits"])
