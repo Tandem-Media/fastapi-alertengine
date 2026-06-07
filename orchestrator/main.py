@@ -503,6 +503,119 @@ async def incident_audit_report(incident_id: str, tenant_id: Optional[str] = Non
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+# ── Self-serve signup endpoint ────────────────────────────────────────────────
+
+@health_app.post("/signup", tags=["onboarding"])
+async def signup(request: Request):
+    """
+    Self-serve signup endpoint. Called from the landing page form.
+
+    Stores lead in Redis, sends auto-response to customer,
+    and notifies Lenard for manual tenant creation.
+
+    Body:
+        {
+            "name": "John Smith",
+            "email": "john@example.com",
+            "phone": "+263712345678",
+            "health_url": "https://myapp.railway.app/health/alerts",
+            "plan": "growth",
+            "channel": "whatsapp",
+            "recovery_webhook_url": "https://myapp.railway.app/recovery",
+            "github_repo": "owner/repo"
+        }
+    """
+    try:
+        from signup import store_lead, send_auto_response, notify_lenard
+
+        body = await request.json()
+
+        # Validate required fields
+        required = ["name", "email", "phone", "health_url", "plan"]
+        missing  = [f for f in required if not body.get(f)]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required fields: {', '.join(missing)}"
+            )
+
+        # Sanitize plan name
+        plan = body.get("plan", "growth").lower().strip()
+        valid_plans = {"starter", "growth", "team", "compliance", "platform", "enterprise"}
+        if plan not in valid_plans:
+            plan = "growth"
+
+        lead = {
+            "name":                 body.get("name", "").strip(),
+            "email":                body.get("email", "").strip().lower(),
+            "phone":                body.get("phone", "").strip(),
+            "health_url":           body.get("health_url", "").strip(),
+            "plan":                 plan,
+            "channel":              body.get("channel", "whatsapp").strip(),
+            "recovery_webhook_url": body.get("recovery_webhook_url", "").strip() or None,
+            "github_repo":          body.get("github_repo", "").strip() or None,
+            "message":              body.get("message", "").strip() or None,
+        }
+
+        lead_id = store_lead(lead)
+
+        # Fire and forget — don't block response on email
+        import asyncio
+        asyncio.create_task(
+            asyncio.to_thread(send_auto_response, lead)
+        )
+        asyncio.create_task(
+            asyncio.to_thread(notify_lenard, lead)
+        )
+
+        logger.info("New signup: %s %s (%s)", lead_id, lead["name"], lead["plan"])
+
+        return {
+            "success":  True,
+            "lead_id":  lead_id,
+            "message":  "Thanks for signing up! You'll be live within 2 hours.",
+            "plan":     plan,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Signup error: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@health_app.get("/signup/leads", tags=["onboarding"])
+async def list_signup_leads(admin_key: str = "", limit: int = 20):
+    """List recent signup leads. Requires admin key."""
+    expected = os.getenv("ADMIN_KEY", "")
+    if not expected or admin_key != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from signup import list_leads
+        leads = list_leads(limit)
+        return {"leads": leads, "count": len(leads)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@health_app.post("/signup/leads/{lead_id}/onboarded", tags=["onboarding"])
+async def mark_onboarded(lead_id: str, admin_key: str = ""):
+    """Mark a lead as onboarded after tenant creation."""
+    expected = os.getenv("ADMIN_KEY", "")
+    if not expected or admin_key != expected:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        from signup import mark_lead_onboarded
+        ok = mark_lead_onboarded(lead_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Lead not found")
+        return {"success": True, "lead_id": lead_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 # ── Diff-in-Pocket: Git commit webhook ────────────────────────────────────────
 
 @health_app.post("/commits/webhook", include_in_schema=True, tags=["commits"])
