@@ -2,9 +2,10 @@
 
 **Human-authorized incident recovery for production APIs.**
 
-> **Authorized. Audited. Replayable.**
+> **Monitoring tools detect failures.**
+> **AlertEngine records how humans respond to them.**
 
-*Production infrastructure with financial-grade authorization discipline — without the certification overhead.*
+*Authorized. Audited. Replayable.*
 
 [![PyPI](https://img.shields.io/pypi/v/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
 [![Python](https://img.shields.io/pypi/pyversions/fastapi-alertengine)](https://pypi.org/project/fastapi-alertengine/)
@@ -23,15 +24,13 @@ Nothing executes without your explicit approval. Every action is logged and repl
 
 ## Why AlertEngine Exists
 
-Monitoring tools tell you something broke.
+Monitoring tools detect failures.
 
-Runbooks tell you what to do.
+**AlertEngine records how humans respond to them.**
 
-Automation platforms execute actions for you.
+Runbooks tell you what to do. Automation platforms execute fixes. Neither tells you who authorized the action, which policy was active, or whether the decision was correct.
 
-AlertEngine sits between all three.
-
-It combines detection, diagnosis, authorization, execution, and audit into a single workflow — with a human in the loop at the authorization step.
+AlertEngine sits between detection and execution — enforcing that every recovery action is authorized by a human, logged immutably, and replayable by an auditor.
 
 The goal is not autonomous remediation. The goal is **accountable remediation**.
 
