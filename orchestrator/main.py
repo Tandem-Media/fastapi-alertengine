@@ -19,6 +19,10 @@ logger = logging.getLogger("orchestrator")
 
 _START_TIME = time.time()
 
+# Rate limiter — per IP, in-memory
+# Protects public endpoints from flooding and abuse
+limiter = Limiter(key_func=get_remote_address)
+
 INSECURE_DEFAULTS = {
     "change-this-in-prod",
     "secret",
@@ -68,7 +72,15 @@ def _check_redis() -> tuple[bool, str]:
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from typing import Optional
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 import uvicorn
+
+
+# Wire rate limiter into app
+health_app.state.limiter = limiter
+health_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @asynccontextmanager
@@ -305,6 +317,7 @@ async def recover_action(token: str):
 
 
 @health_app.post("/action/recover/confirm")
+@limiter.limit("30/hour")
 async def recover_action_confirm(token: str):
     """
     Human-authorized recovery endpoint.
@@ -466,6 +479,7 @@ async def recover_action_confirm(token: str):
 # ── Auditor's One-Pager: PDF audit report ─────────────────────────────────────
 
 @health_app.get("/audit/{incident_id}/report", tags=["audit"])
+@limiter.limit("60/hour")
 async def incident_audit_report(incident_id: str, tenant_id: Optional[str] = None):
     """
     Generate a PDF audit report for an incident.
@@ -506,6 +520,7 @@ async def incident_audit_report(incident_id: str, tenant_id: Optional[str] = Non
 # ── Self-serve signup endpoint ────────────────────────────────────────────────
 
 @health_app.post("/signup", tags=["onboarding"])
+@limiter.limit("10/hour")
 async def signup(request: Request):
     """
     Self-serve signup endpoint. Called from the landing page form.
@@ -619,6 +634,7 @@ async def mark_onboarded(lead_id: str, admin_key: str = ""):
 # ── Diff-in-Pocket: Git commit webhook ────────────────────────────────────────
 
 @health_app.post("/commits/webhook", include_in_schema=True, tags=["commits"])
+@limiter.limit("100/hour")
 async def github_webhook(request: Request):
     """
     Receive GitHub push webhook events and store commit context.
