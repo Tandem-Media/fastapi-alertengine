@@ -9,7 +9,17 @@ import html
 import logging
 import os
 import time
+from contextlib import asynccontextmanager
+from typing import Optional
 from urllib.parse import quote
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+import uvicorn
 
 logging.basicConfig(
     level=logging.INFO,
@@ -69,20 +79,6 @@ def _check_redis() -> tuple[bool, str]:
         return False, str(e)
 
 
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
-from typing import Optional
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-import uvicorn
-
-
-# Wire rate limiter into app
-health_app.state.limiter = limiter
-health_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _validate_alert_secret()
@@ -91,19 +87,16 @@ async def lifespan(app: FastAPI):
 
 health_app = FastAPI(title="AlertEngine Orchestrator", lifespan=lifespan)
 
+# Wire rate limiter into app
+health_app.state.limiter = limiter
+health_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Mount onboarding router
 from onboard import router as onboard_router
 from onboarding_api import router as onboarding_router
-# Standard onboarding: phone verification flow (production)
-# See orchestrator/onboard.py
 health_app.include_router(onboard_router)
-# Quick-start onboarding: immediate activation (dev/testing)
-# See orchestrator/onboarding_api.py
 health_app.include_router(onboarding_router)
 
-
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse
 import os as _os
 
 _STATIC_DIR = _os.path.join(_os.path.dirname(__file__), "static")
