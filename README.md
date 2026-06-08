@@ -2,8 +2,8 @@
 
 **Human-authorized incident recovery for production APIs.**
 
-> **Monitoring tools detect failures.**
-> **AlertEngine records how humans respond to them.**
+> \\\\\\\*\\\\\\\*Monitoring tools detect failures.\\\\\\\*\\\\\\\*
+> \\\\\\\*\\\\\\\*AlertEngine records how humans respond to them.\\\\\\\*\\\\\\\*
 
 *Authorized. Audited. Replayable.*
 
@@ -34,6 +34,8 @@ AlertEngine sits between detection and execution — enforcing that every recove
 
 The goal is not autonomous remediation. The goal is **accountable remediation**.
 
+**Metastability Defense:** AlertEngine's human-in-the-loop authorization breaks the metastable feedback loops that automated remediation amplifies in agent-driven workloads. Peer-reviewed research (Demirbas et al., ACM CAIS 2026) shows AI agents create ~50x more rollbacks than human clients — their aggressive retry behavior turns automated recovery into a feedback amplifier. Human authorization is not a limitation. It is a resilience mechanism. [Read the full analysis](docs/ARCHITECTURE.md#10-metastability-defense)
+
 ---
 
 ## The Governance Model
@@ -41,18 +43,24 @@ The goal is not autonomous remediation. The goal is **accountable remediation**.
 Most monitoring tools detect incidents and alert you. AlertEngine detects, diagnoses, asks permission, executes, and proves it — in that order, every time.
 
 ```
+
 Detection    →  Deterministic policy rules. No AI involved.
+
 Diagnosis    →  AI explains what broke and why. Confidence-gated.
+
 Authorization →  Engineer taps approve. Nothing runs without this.
+
 Execution    →  Your recovery webhook is called. 3 retries. DLQ on failure.
+
 Audit        →  Append-only log. Every stage. Every actor. Replayable.
+
 ```
 
 This hierarchy is enforced by the architecture, not by convention:
 
 - `policy.py` decides whether an incident exists — Claude does not
 - `pipeline.py` owns state transitions — Claude does not
-- `action_generator.py` gates execution behind a signed JWT — Claude does not
+- `action\\\\\\\_generator.py` gates execution behind a signed JWT — Claude does not
 - `audit.py` records everything regardless of outcome
 
 **AI explains. Humans authorize. The system proves.**
@@ -62,32 +70,54 @@ This hierarchy is enforced by the architecture, not by convention:
 ## What an Incident Looks Like
 
 ```
+
 🚨 Checkout API degraded
+
 Health score: 23/100 | P95: 2.8s | Errors: 19%
+
+
 
 Both models agree.
 
+
+
 Likely cause:
+
 Database connection pool exhausted — connections
+
 not being released after query timeout.
 
+
+
 Recent deployment:
+
 3 minutes ago — a1b2c3d
+
 "Fix checkout query isolation level" (John, +12/-3)
+
 ⚠️ This commit touched database/query files
-*(Requires GitHub webhook — POST /commits/webhook)*
+
+\\\\\\\*(Requires GitHub webhook — POST /commits/webhook)\\\\\\\*
+
+
 
 Suggested fix:
+
 Restart checkout worker pool
+
+
 
 Confidence: 87%
 
-[Approve fix]  Nothing will run without your approval.
+
+
+\\\\\\\[Approve fix]  Nothing will run without your approval.
+
 ```
 
 One message. Everything you need to make a decision. Nothing executes until you tap approve.
 
-> If the two AI models **disagree**, you receive a Dissent Alert instead — two competing theories, confidence scores, and specific logs to check before approving. See [Diagnostic Council](#diagnostic-council) below.
+> If the two AI models \\\\\\\*\\\\\\\*disagree\\\\\\\*\\\\\\\*, you receive a Dissent Alert instead — two competing theories, confidence scores, and specific logs to check before approving. See \\\\\\\[Diagnostic Council](#diagnostic-council) below.
 
 ---
 
@@ -129,15 +159,23 @@ One message. Everything you need to make a decision. Nothing executes until you 
 ## Install + Quickstart
 
 ```bash
+
 pip install fastapi-alertengine
+
 ```
 
 ```python
+
 from fastapi import FastAPI
-from fastapi_alertengine import instrument
+
+from fastapi\\\\\\\_alertengine import instrument
+
+
 
 app = FastAPI()
+
 instrument(app)  # that's it
+
 ```
 
 Your app now exposes `/health/alerts`.
@@ -145,15 +183,25 @@ Your app now exposes `/health/alerts`.
 **Try it locally — no orchestrator needed:**
 
 ```bash
-# Clone the repo and run the demo
-git clone https://github.com/Tandem-Media/fastapi-alertengine
-cd fastapi-alertengine
-pip install fastapi-alertengine uvicorn httpx
-uvicorn examples.quickstart_example:app --reload
 
-# In another terminal — simulate a spike
+\\\\# Clone the repo and run the demo
+
+git clone https://github.com/Tandem-Media/fastapi-alertengine
+
+cd fastapi-alertengine
+
+pip install fastapi-alertengine uvicorn httpx
+
+uvicorn examples.quickstart\\\\\\\_example:app --reload
+
+
+
+\\\\# In another terminal — simulate a spike
+
 curl -X POST localhost:8000/simulate/spike
+
 curl -s localhost:8000/health/alerts | python3 -m json.tool
+
 ```
 
 | Endpoint | Description |
@@ -161,7 +209,7 @@ curl -s localhost:8000/health/alerts | python3 -m json.tool
 | `GET /health/alerts` | Current health status |
 | `GET /metrics/history` | Per-minute aggregated metrics |
 | `GET /metrics/ingestion` | Ingestion counters |
-| `GET /__alertengine/status` | Full engine status |
+| `GET /\\\\\\\_\\\\\\\_alertengine/status` | Full engine status |
 
 ---
 
@@ -184,32 +232,55 @@ curl -s localhost:8000/health/alerts | python3 -m json.tool
 ## Architecture & Auditability
 
 ```
+
 Your servers                          Tandem Media servers
+
 ─────────────────────────────────     ──────────────────────────────────────
+
 FastAPI app                           Orchestrator (polls every 5s)
-  instrument(app)                       ↓ policy gates (deterministic)
-  ↓                                   ↓ AI diagnosis (advisory only)
+
+\\\&#x20; instrument(app)                       ↓ policy gates (deterministic)
+
+\\\&#x20; ↓                                   ↓ AI diagnosis (advisory only)
+
 Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
-  append-only        P95 · score        WhatsApp / Telegram alert
-  event log          · trend              diagnosis · recovery link
-                                          single-use JWT · 5 min TTL
-                                          ↓ engineer taps approve
-                                        POST /action/recover/confirm
-                                          ↓ 3 retries · exponential backoff
-                                        Your recovery webhook
-                                          ↓
-                                        Immutable audit log
-                                          every stage · every actor · replayable
+
+\\\&#x20; append-only        P95 · score        WhatsApp / Telegram alert
+
+\\\&#x20; event log          · trend              diagnosis · recovery link
+
+\\\&#x20;                                         single-use JWT · 5 min TTL
+
+\\\&#x20;                                         ↓ engineer taps approve
+
+\\\&#x20;                                       POST /action/recover/confirm
+
+\\\&#x20;                                         ↓ 3 retries · exponential backoff
+
+\\\&#x20;                                       Your recovery webhook
+
+\\\&#x20;                                         ↓
+
+\\\&#x20;                                       Immutable audit log
+
+\\\&#x20;                                         every stage · every actor · replayable
+
 ```
 
 AlertEngine treats every incident as a **transaction** — not a notification. Like a financial ledger, every stage is recorded with an immutable audit entry showing the actor, timestamp, and policy version.
 
 ```
-[*] ──→ DETECTED ──→ PROPOSED ──→ VALIDATED ──→ AUTHORIZED ──→ EXECUTED ──→ RESOLVED ──→ [*]
-             │              │             │                                    │
-             └──────────────┴─────────────┴── RECOVERED ──→ [*]  (policy override)
-                                          │
-                                          └── EXPIRED (JWT TTL)     WEBHOOK_FAILED ──→ DLQ
+
+\\\\\\\[\\\\\\\*] ──→ DETECTED ──→ PROPOSED ──→ VALIDATED ──→ AUTHORIZED ──→ EXECUTED ──→ RESOLVED ──→ \\\\\\\[\\\\\\\*]
+
+\\\&#x20;            │              │             │                                    │
+
+\\\&#x20;            └──────────────┴─────────────┴── RECOVERED ──→ \\\\\\\[\\\\\\\*]  (policy override)
+
+\\\&#x20;                                         │
+
+\\\&#x20;                                         └── EXPIRED (JWT TTL)     WEBHOOK\\\\\\\_FAILED ──→ DLQ
+
 ```
 
 Full state machine with transition guards: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
@@ -218,7 +289,7 @@ Full state machine with transition guards: [docs/ARCHITECTURE.md](docs/ARCHITECT
 
 | Actor | When | Example |
 |-------|------|---------|
-| `policy` | Hard thresholds override AI | `should_recover()` → RECOVERED |
+| `policy` | Hard thresholds override AI | `should\\\\\\\_recover()` → RECOVERED |
 | `claude` | AI diagnosis and recommendation | "Database connection pool exhausted" |
 | `engineer` | Human authorization | Taps "Approve" on WhatsApp |
 | `orchestrator` | State machine execution | Webhook called, transition applied |
@@ -231,17 +302,17 @@ Redis loss → full replay from the audit ledger.
 
 ---
 
-**The moat is the governance layer:** `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward — with or without AI involvement.
+**The moat is the governance layer:** `incident\\\\\\\_policy.py`, `audit.py`, `delivery\\\\\\\_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward — with or without AI involvement.
 
 Every design principle is enforced by code and provable by audit:
 
 | Principle | Enforcement |
 |-----------|-------------|
-| Policy decides incidents, not AI | `should_recover()` in `pipeline.py` sets `actor="policy"` |
+| Policy decides incidents, not AI | `should\\\\\\\_recover()` in `pipeline.py` sets `actor="policy"` |
 | AI explains, humans authorize | Claude generates message; JWT gates execution |
 | Nothing executes without approval | `POST /action/recover/confirm` requires valid JWT |
-| Every action logged immutably | `append_event()` on every transition, every actor |
-| Deterministic alert rules | `incident_policy.py` — single versioned POLICY dict |
+| Every action logged immutably | `append\\\\\\\_event()` on every transition, every actor |
+| Deterministic alert rules | `incident\\\\\\\_policy.py` — single versioned POLICY dict |
 
 ---
 
@@ -267,38 +338,67 @@ Every design principle is enforced by code and provable by audit:
 ### What You Get
 
 ```json
+
 {
-  "status": "critical",
-  "health_score": {"score": 23, "status": "critical", "trend": "degrading"},
-  "metrics": {
-    "overall_p95_ms": 2847.3,
-    "error_rate": 0.19,
-    "anomaly_score": 1.4,
-    "sample_size": 187
-  },
-  "alerts": [
-    {
-      "type": "latency_spike",
-      "severity": "critical",
-      "reason_for_trigger": "P95 latency 2847ms exceeds threshold 3000ms",
-      "triggered_by": "absolute_threshold"
-    }
-  ]
+
+\\\&#x20; "status": "critical",
+
+\\\&#x20; "health\\\\\\\_score": {"score": 23, "status": "critical", "trend": "degrading"},
+
+\\\&#x20; "metrics": {
+
+\\\&#x20;   "overall\\\\\\\_p95\\\\\\\_ms": 2847.3,
+
+\\\&#x20;   "error\\\\\\\_rate": 0.19,
+
+\\\&#x20;   "anomaly\\\\\\\_score": 1.4,
+
+\\\&#x20;   "sample\\\\\\\_size": 187
+
+\\\&#x20; },
+
+\\\&#x20; "alerts": \\\\\\\[
+
+\\\&#x20;   {
+
+\\\&#x20;     "type": "latency\\\\\\\_spike",
+
+\\\&#x20;     "severity": "critical",
+
+\\\&#x20;     "reason\\\\\\\_for\\\\\\\_trigger": "P95 latency 2847ms exceeds threshold 3000ms",
+
+\\\&#x20;     "triggered\\\\\\\_by": "absolute\\\\\\\_threshold"
+
+\\\&#x20;   }
+
+\\\&#x20; ]
+
 }
+
 ```
 
 ### Pipeline
 
 ```
+
 FastAPI Request
+
 ↓
+
 RequestMetricsMiddleware  ← measures latency + status
+
 ↓
+
 Redis Streams             ← append-only event log
+
 ↓
+
 Alert Engine              ← P95 + error rate + anomaly scoring
+
 ↓
+
 /health/alerts            ← single status: ok | warning | critical
+
 ```
 
 ---
@@ -342,14 +442,23 @@ If they **agree** → one clean alert with "both models agree"
 
 If they **diverge** → Dissent Alert:
 ```
+
 ⚠️ Degraded State — Models Disagree
+
 Theory A (Database): Connection pool exhausted (82%)
+
 Theory B (Network): Upstream API timeout (76%)
+
+
 
 Check: DB slow query log vs upstream response times
 
+
+
 👉 Trust Theory A  👉 Trust Theory B
+
 Nothing will run without your approval.
+
 ```
 
 ### Diff-in-Pocket
@@ -357,9 +466,13 @@ Nothing will run without your approval.
 Incidents are correlated with recent git commits:
 
 ```
+
 Recent deployments before incident:
-  3m ago — a1b2c3d: "Fix checkout query isolation level" (John, +12/-3)
-  ⚠️ 1 commit touched database/query files
+
+\\\&#x20; 3m ago — a1b2c3d: "Fix checkout query isolation level" (John, +12/-3)
+
+\\\&#x20; ⚠️ 1 commit touched database/query files
+
 ```
 
 Set up via GitHub webhook → `POST /commits/webhook`.
@@ -493,7 +606,7 @@ This is not a monitoring tool that grew up. It is a governance system designed f
 | COUNCIL_ENABLED | No | Dual-model diagnosis (default: true) |
 | GITHUB_TOKEN | No | GitHub API for Diff-in-Pocket commit context |
 
-> `ALERTENGINE_BASE_URL` is the orchestrator URL you receive after onboarding.
+> `ALERTENGINE\\\\\\\_BASE\\\\\\\_URL` is the orchestrator URL you receive after onboarding.
 > Your app's `/health/alerts` URL is configured per-tenant during onboarding.
 
 ---
@@ -501,37 +614,64 @@ This is not a monitoring tool that grew up. It is a governance system designed f
 ## Repository Structure
 
 ```text
-fastapi_alertengine/     ← Free SDK — MIT licensed — install this
-  middleware.py          ← RequestMetricsMiddleware
-  engine.py             ← Core alert engine
-  intelligence.py       ← Adaptive thresholds, health scoring
-  actions/              ← Recovery suggestions and JWT tokens
-  storage.py            ← Redis Streams persistence
+
+fastapi\\\\\\\_alertengine/     ← Free SDK — MIT licensed — install this
+
+\\\&#x20; middleware.py          ← RequestMetricsMiddleware
+
+\\\&#x20; engine.py             ← Core alert engine
+
+\\\&#x20; intelligence.py       ← Adaptive thresholds, health scoring
+
+\\\&#x20; actions/              ← Recovery suggestions and JWT tokens
+
+\\\&#x20; storage.py            ← Redis Streams persistence
+
+
 
 orchestrator/           ← Source-available for security audit only
-  loop.py              ← Published here for transparency — NOT for self-hosting
-  pipeline.py          ← Incident state machine + IncidentStage enum
-  incident_policy.py   ← Single source of truth for all thresholds
-  claude_engine.py     ← AI diagnosis (tool use, few-shot, hardened)
-  diagnostic_council.py ← Dual-model incident court
-  commit_context.py    ← Diff-in-Pocket commit correlation
-  baseline.py          ← Per-tenant EMA baseline memory
-  diagnosis_memory.py  ← Multi-turn diagnosis history
-  audit.py             ← Immutable forensic log
-  notifications.py     ← Multi-channel dispatch
-  action_generator.py  ← JWT recovery token creation
-  safe_payload.py      ← Schema drift protection
-  plans.py             ← Billing tiers and feature gates
-  See LICENSE-ORCHESTRATOR.md
 
-examples/               ← Demo scripts (try quickstart_example.py)
+\\\&#x20; loop.py              ← Published here for transparency — NOT for self-hosting
+
+\\\&#x20; pipeline.py          ← Incident state machine + IncidentStage enum
+
+\\\&#x20; incident\\\\\\\_policy.py   ← Single source of truth for all thresholds
+
+\\\&#x20; claude\\\\\\\_engine.py     ← AI diagnosis (tool use, few-shot, hardened)
+
+\\\&#x20; diagnostic\\\\\\\_council.py ← Dual-model incident court
+
+\\\&#x20; commit\\\\\\\_context.py    ← Diff-in-Pocket commit correlation
+
+\\\&#x20; baseline.py          ← Per-tenant EMA baseline memory
+
+\\\&#x20; diagnosis\\\\\\\_memory.py  ← Multi-turn diagnosis history
+
+\\\&#x20; audit.py             ← Immutable forensic log
+
+\\\&#x20; notifications.py     ← Multi-channel dispatch
+
+\\\&#x20; action\\\\\\\_generator.py  ← JWT recovery token creation
+
+\\\&#x20; safe\\\\\\\_payload.py      ← Schema drift protection
+
+\\\&#x20; plans.py             ← Billing tiers and feature gates
+
+\\\&#x20; See LICENSE-ORCHESTRATOR.md
+
+
+
+examples/               ← Demo scripts (try quickstart\\\\\\\_example.py)
+
 docs/                   ← Architecture docs + landing page
+
 tests/                  ← 232 tests, Python 3.10/3.11/3.12
+
 ```
 
 > The `orchestrator/` source is published for security audit and transparency.
-> It is **not** designed for self-hosting. Runtime is operated by Tandem Media.
-> See [LICENSE-ORCHESTRATOR.md](LICENSE-ORCHESTRATOR.md).
+> It is \\\\\\\*\\\\\\\*not\\\\\\\*\\\\\\\* designed for self-hosting. Runtime is operated by Tandem Media.
+> See \\\\\\\[LICENSE-ORCHESTRATOR.md](LICENSE-ORCHESTRATOR.md).
 
 ---
 
@@ -555,7 +695,9 @@ overwhelm the system with concurrent requests.
 
 **Free SDK:**
 ```bash
+
 pip install fastapi-alertengine
+
 ```
 
 **Managed orchestrator (Growth — $99/mo):**
@@ -581,14 +723,14 @@ P95 latency tracking, error rate detection, health scoring, anomaly detection. F
 Deterministic policy gates, AI-assisted diagnosis, human authorization, webhook execution, immutable audit trail. Managed orchestrator, live in production.
 
 **Phase 3 — Decision Governance** ✅ *In progress*
-Diagnostic Council (dual-model adversarial deliberation), Diff-in-Pocket commit correlation, policy versioning, actor attribution, Auditor's One-Pager PDF. The audit trail as a compliance asset.
+Diagnostic Council (dual-model adversarial deliberation, live — `COUNCIL\\\\\\\_ENABLED=true` by default), Diff-in-Pocket commit correlation, policy versioning, actor attribution, Auditor's One-Pager PDF. The audit trail as a compliance asset. Human authorization as metastability defense (Demirbas et al., ACM CAIS 2026).
 
 **Phase 4 — Governance Simulation** 🔭 *Future direction*
 Before trusting a process during an emergency, test the process itself.
 
 AlertEngine is already built around explicit policies, deterministic state transitions, and an immutable event history. These are the exact ingredients needed for simulation. A future Policy Simulator could answer:
 
-> *"If our database error rate jumps to 20% and reviewers are unavailable for an hour, what happens to our incident governance process?"*
+> \\\\\\\*"If our database error rate jumps to 20% and reviewers are unavailable for an hour, what happens to our incident governance process?"\\\\\\\*
 
 Most incident tools cannot answer that question. AlertEngine's architecture is designed to eventually be able to.
 
@@ -620,7 +762,7 @@ Growth and Starter: no overage — incidents are silently counted but not billed
 
 ## License + Contact
 
-**Free SDK** (`fastapi_alertengine/`): MIT — see [LICENSE](LICENSE)
+**Free SDK** (`fastapi\\\\\\\_alertengine/`): MIT — see [LICENSE](LICENSE)
 
 **Orchestrator** (`orchestrator/`): Source-available for audit only — see [LICENSE-ORCHESTRATOR.md](LICENSE-ORCHESTRATOR.md)
 
