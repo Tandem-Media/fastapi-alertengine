@@ -170,7 +170,7 @@ bash
 
 \# Clone the repo and run the demo
 
-git clone https://github.com/Tandem-Media/fastapi-alertengine
+git clone https://github.com/tofamba/fastapi-alertengine
 
 cd fastapi-alertengine
 
@@ -852,7 +852,4 @@ Free SDK (fastapi\_alertengine/): MIT — see LICENSE
 
 Orchestrator (orchestrator/): Source-available for audit only — see LICENSE-ORCHESTRATOR.md
 
-Contact: anchorflowalertengine@outlook.com
-
-
-
+Contact: tofambatech@outlook.com
