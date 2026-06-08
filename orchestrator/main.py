@@ -311,7 +311,7 @@ async def recover_action(token: str):
 
 @health_app.post("/action/recover/confirm")
 @limiter.limit("30/hour")
-async def recover_action_confirm(token: str):
+async def recover_action_confirm(request: Request, token: str):
     """
     Human-authorized recovery endpoint.
 
@@ -473,7 +473,7 @@ async def recover_action_confirm(token: str):
 
 @health_app.get("/audit/{incident_id}/report", tags=["audit"])
 @limiter.limit("60/hour")
-async def incident_audit_report(incident_id: str, tenant_id: Optional[str] = None):
+async def incident_audit_report(request: Request, incident_id: str, tenant_id: Optional[str] = None):
     """
     Generate a PDF audit report for an incident.
 
