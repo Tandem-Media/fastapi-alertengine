@@ -570,6 +570,32 @@ Ready for accountable incident response? We'll configure your policy file, webho
 
 ---
 
+## Roadmap
+
+AlertEngine is evolving through four phases:
+
+**Phase 1 — Alert Detection** ✅ *Complete*
+P95 latency tracking, error rate detection, health scoring, anomaly detection. Free SDK, MIT licensed.
+
+**Phase 2 — Incident Orchestration** ✅ *Complete*
+Deterministic policy gates, AI-assisted diagnosis, human authorization, webhook execution, immutable audit trail. Managed orchestrator, live in production.
+
+**Phase 3 — Decision Governance** ✅ *In progress*
+Diagnostic Council (dual-model adversarial deliberation), Diff-in-Pocket commit correlation, policy versioning, actor attribution, Auditor's One-Pager PDF. The audit trail as a compliance asset.
+
+**Phase 4 — Governance Simulation** 🔭 *Future direction*
+Before trusting a process during an emergency, test the process itself.
+
+AlertEngine is already built around explicit policies, deterministic state transitions, and an immutable event history. These are the exact ingredients needed for simulation. A future Policy Simulator could answer:
+
+> *"If our database error rate jumps to 20% and reviewers are unavailable for an hour, what happens to our incident governance process?"*
+
+Most incident tools cannot answer that question. AlertEngine's architecture is designed to eventually be able to.
+
+Inspired by: Demirbas, Charapko, Vig — *"A Case for Simulation-Driven Resilience in Agentic Data Systems"* (ACM CAIS 2026). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#9-metastability-defense)
+
+---
+
 ## FAQ
 
 **Can I self-host the orchestrator?**
