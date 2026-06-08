@@ -34,4 +34,4 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Tandem-Media/fastapi-alertengine"
+Homepage = "https://github.com/tofamba/fastapi-alertengine"
