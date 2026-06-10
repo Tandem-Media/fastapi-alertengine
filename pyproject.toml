@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fastapi-alertengine"
-version = "1.6.0"
-description = "FastAPI incident intelligence with human-approved recovery. P95 latency tracking, adaptive health scoring, and WhatsApp/Telegram recovery approvals that require explicit human authorization before any action executes."
+version = "1.7.0"
+description = "Human-authorized incident recovery for FastAPI — detect, diagnose, approve, execute, audit. P95 latency tracking, adaptive health scoring, and WhatsApp/Telegram recovery approvals that require explicit human authorization before any action executes."
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-  { name = "Tandem Media" }
+  { name = "Tofamba" }
 ]
 license = "MIT"
 dependencies = [
