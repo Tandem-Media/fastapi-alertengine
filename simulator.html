@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tofamba Incident Simulator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #020617;
+    color: #f1f5f9;
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+    letter-spacing: -0.02em;
+  }
+  .subtitle {
+    font-size: 0.875rem;
+    color: #64748b;
+    margin-bottom: 24px;
+  }
+  .card {
+    background: rgba(30, 41, 59, 0.5);
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #64748b;
+    margin-bottom: 16px;
+  }
+
+  /* Health Gauge */
+  .gauge-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+  .gauge-svg { width: 200px; height: 200px; }
+  .gauge-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: -8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+  }
+  .gauge-label .trend { font-size: 0.75rem; }
+
+  /* Sliders */
+  .slider-group { margin-bottom: 16px; }
+  .slider-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    margin-bottom: 8px;
+  }
+  .slider-label span:first-child { color: #94a3b8; }
+  .slider-label span:last-child {
+    font-family: ui-monospace, monospace;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 3px;
+    background: #334155;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #60a5fa;
+    border: 2px solid #1e3a5f;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { background: #93c5fd; }
+  input[type="range"]::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #60a5fa;
+    border: 2px solid #1e3a5f;
+    cursor: pointer;
+  }
+
+  /* Policy Gates */
+  .gates { display: flex; gap: 12px; flex-wrap: wrap; }
+  .gate {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    transition: all 0.3s ease;
+  }
+  .gate.inactive {
+    background: rgba(30, 41, 59, 0.8);
+    border: 1px solid #334155;
+    color: #64748b;
+  }
+  .gate.active {
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+  }
+  .gate.severe {
+    background: rgba(245, 158, 11, 0.15);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #fbbf24;
+  }
+  .gate.healthy {
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    color: #34d399;
+  }
+  .gate-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+  }
+  .gate.inactive .gate-dot { background: #475569; }
+  .gate.active .gate-dot { background: #60a5fa; box-shadow: 0 0 8px rgba(96, 165, 250, 0.4); }
+  .gate.severe .gate-dot { background: #f59e0b; box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
+  .gate.healthy .gate-dot { background: #10b981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+
+  /* Pipeline */
+  .pipeline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+  .stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 70px;
+  }
+  .stage-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2px solid;
+    transition: all 0.4s ease;
+  }
+  .stage.pending .stage-dot { background: transparent; border-color: #475569; }
+  .stage.current .stage-dot { background: #60a5fa; border-color: #60a5fa; box-shadow: 0 0 10px rgba(96, 165, 250, 0.5); }
+  .stage.completed .stage-dot { background: #10b981; border-color: #10b981; }
+  .stage-name {
+    font-size: 0.625rem;
+    font-family: ui-monospace, monospace;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    transition: color 0.3s ease;
+  }
+  .stage.pending .stage-name { color: #64748b; }
+  .stage.current .stage-name { color: #93c5fd; }
+  .stage.completed .stage-name { color: #34d399; }
+  .stage-actor {
+    font-size: 0.5625rem;
+    color: #475569;
+    font-family: ui-monospace, monospace;
+  }
+  .stage-connector {
+    width: 32px;
+    height: 2px;
+    margin-bottom: 20px;
+    transition: background 0.4s ease;
+  }
+  .stage-connector.pending { background: #334155; }
+  .stage-connector.completed { background: #059669; }
+
+  /* Diagnosis Card */
+  .diagnosis-card {
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-top: 16px;
+  }
+  .diagnosis-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+  }
+  .diagnosis-header.consensus { background: rgba(16, 185, 129, 0.08); }
+  .diagnosis-header.dissent { background: rgba(245, 158, 11, 0.08); }
+  .diagnosis-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .diagnosis-title .icon { width: 16px; height: 16px; }
+  .consensus .diagnosis-title { color: #6ee7b7; }
+  .dissent .diagnosis-title { color: #fbbf24; }
+  .diagnosis-badge {
+    font-size: 0.625rem;
+    font-family: ui-monospace, monospace;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(51, 65, 85, 0.6);
+    color: #94a3b8;
+  }
+  .diagnosis-body { padding: 16px; }
+  .model-block {
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .model-block.consensus { background: rgba(16, 185, 129, 0.05); border-color: rgba(16, 185, 129, 0.2); }
+  .model-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 8px;
+  }
+  .model-name { font-size: 0.75rem; font-weight: 600; color: #e2e8f0; }
+  .model-spec { font-size: 0.625rem; color: #64748b; font-family: ui-monospace, monospace; }
+  .model-category {
+    font-size: 0.625rem;
+    font-family: ui-monospace, monospace;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(51, 65, 85, 0.6);
+    color: #cbd5e1;
+  }
+  .model-cause { font-size: 0.8125rem; color: #e2e8f0; line-height: 1.5; margin-bottom: 8px; }
+  .confidence-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .confidence-track {
+    flex: 1;
+    height: 6px;
+    background: #1e293b;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .confidence-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s ease;
+  }
+  .confidence-value {
+    font-size: 0.625rem;
+    font-family: ui-monospace, monospace;
+    color: #94a3b8;
+    width: 32px;
+    text-align: right;
+  }
+  .logs-check { margin-top: 10px; }
+  .logs-check p {
+    font-size: 0.625rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+  .log-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: #94a3b8;
+    font-family: ui-monospace, monospace;
+    margin-bottom: 4px;
+  }
+  .log-item::before { content: "›"; color: #475569; font-size: 0.875rem; }
+  .action-block {
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .action-block p:first-child {
+    font-size: 0.625rem;
+    color: #93c5fd;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+  }
+  .action-block p:last-child { font-size: 0.875rem; color: #e2e8f0; }
+  .auth-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .auth-note { font-size: 0.75rem; color: #64748b; }
+  .auth-buttons { display: flex; gap: 8px; }
+  .btn {
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+  }
+  .btn-secondary {
+    background: transparent;
+    border-color: #475569;
+    color: #94a3b8;
+  }
+  .btn-secondary:hover { border-color: #64748b; color: #e2e8f0; }
+  .btn-primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  .btn-primary:hover { background: #3b82f6; border-color: #3b82f6; }
+  .btn-primary:disabled { background: #1e3a5f; border-color: #1e3a5f; color: #475569; cursor: not-allowed; }
+
+  /* Audit Trail */
+  .audit-trail {
+    margin-top: 16px;
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(16, 185, 129, 0.2);
+    border-radius: 8px;
+    padding: 14px;
+    font-family: ui-monospace, monospace;
+    font-size: 0.75rem;
+  }
+  .audit-trail-title {
+    font-size: 0.625rem;
+    color: #34d399;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 10px;
+  }
+  .audit-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+    opacity: 0;
+    transform: translateY(4px);
+    animation: fadeUp 0.3s ease forwards;
+  }
+  .audit-entry:last-child { border-bottom: none; }
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .audit-check { color: #10b981; font-size: 0.875rem; flex-shrink: 0; }
+  .audit-stage { color: #e2e8f0; font-weight: 600; min-width: 90px; }
+  .audit-actor { color: #60a5fa; min-width: 80px; }
+  .audit-detail { color: #64748b; flex: 1; }
+  .audit-time { color: #475569; flex-shrink: 0; }
+
+  /* Footer */
+  .footer {
+    margin-top: 24px;
+    text-align: center;
+    font-size: 0.75rem;
+    color: #475569;
+  }
+  .footer a { color: #60a5fa; text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+  @media (max-width: 640px) {
+    body { padding: 16px; }
+    .pipeline { gap: 4px; }
+    .stage { min-width: 60px; }
+    .stage-connector { width: 20px; }
+    .dissent-grid { grid-template-columns: 1fr !important; }
+  }
+</style>
+<base target="_blank">
+</head>
+<body>
+<div class="container">
+  <h1>🔥 Incident Simulator</h1>
+  <p class="subtitle">Simulate API health degradation and walk the full incident pipeline</p>
+
+  <!-- Metrics -->
+  <div class="card">
+    <p class="card-title">Metric Controls</p>
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>P95 Latency</span>
+        <span id="p95-value">200ms</span>
+      </div>
+      <input type="range" id="p95" min="0" max="5000" value="200" step="10">
+    </div>
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>Error Rate</span>
+        <span id="error-value">1.0%</span>
+      </div>
+      <input type="range" id="error" min="0" max="100" value="1" step="0.5">
+    </div>
+    <div class="slider-group">
+      <div class="slider-label">
+        <span>Anomaly Score</span>
+        <span id="anomaly-value">0.0</span>
+      </div>
+      <input type="range" id="anomaly" min="0" max="50" value="0" step="0.1">
+    </div>
+  </div>
+
+  <!-- Health Score -->
+  <div class="card">
+    <p class="card-title">Health Score</p>
+    <div class="gauge-container">
+      <svg class="gauge-svg" viewBox="0 0 200 200">
+        <circle cx="100" cy="100" r="72" fill="none" stroke="#1e293b" stroke-width="12"
+          stroke-dasharray="339.292 452.389" stroke-dashoffset="0" stroke-linecap="round"
+          transform="rotate(135, 100, 100)"/>
+        <circle id="gauge-arc" cx="100" cy="100" r="72" fill="none" stroke="#10b981" stroke-width="12"
+          stroke-dasharray="326.719 452.389" stroke-dashoffset="0" stroke-linecap="round"
+          transform="rotate(135, 100, 100)"
+          style="transition: stroke-dasharray 0.5s ease, stroke 0.3s ease"/>
+        <text id="gauge-score" x="100" y="95" text-anchor="middle" dominant-baseline="middle"
+          fill="#10b981" font-size="36" font-weight="700" font-family="ui-monospace, monospace"
+          style="transition: fill 0.3s ease">96</text>
+        <text x="100" y="118" text-anchor="middle" dominant-baseline="middle"
+          fill="#475569" font-size="14" font-family="ui-monospace, monospace">/ 100</text>
+      </svg>
+      <div class="gauge-label" id="gauge-label">
+        <span class="trend" id="gauge-trend">→</span>
+        <span id="gauge-status">HEALTHY</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Policy Gates -->
+  <div class="card">
+    <p class="card-title">Policy Gates</p>
+    <div class="gates">
+      <div class="gate healthy" id="gate-healthy">
+        <div class="gate-dot"></div>
+        <span>Healthy (score ≥ 70)</span>
+      </div>
+      <div class="gate inactive" id="gate-alert">
+        <div class="gate-dot"></div>
+        <span>Alert (score &lt; 70)</span>
+      </div>
+      <div class="gate inactive" id="gate-validate">
+        <div class="gate-dot"></div>
+        <span>Validate (score &lt; 40 or errors &gt; 20%)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Incident Pipeline -->
+  <div class="card">
+    <p class="card-title">Incident Pipeline</p>
+    <div class="pipeline" id="pipeline">
+      <div class="stage pending" id="stage-DETECTED">
+        <div class="stage-dot"></div>
+        <span class="stage-name">DETECTED</span>
+        <span class="stage-actor">policy</span>
+      </div>
+      <div class="stage-connector pending" id="conn-0"></div>
+      <div class="stage pending" id="stage-PROPOSED">
+        <div class="stage-dot"></div>
+        <span class="stage-name">PROPOSED</span>
+        <span class="stage-actor">claude</span>
+      </div>
+      <div class="stage-connector pending" id="conn-1"></div>
+      <div class="stage pending" id="stage-VALIDATED">
+        <div class="stage-dot"></div>
+        <span class="stage-name">VALIDATED</span>
+        <span class="stage-actor">policy</span>
+      </div>
+      <div class="stage-connector pending" id="conn-2"></div>
+      <div class="stage pending" id="stage-AUTHORIZED">
+        <div class="stage-dot"></div>
+        <span class="stage-name">AUTHORIZED</span>
+        <span class="stage-actor">engineer</span>
+      </div>
+      <div class="stage-connector pending" id="conn-3"></div>
+      <div class="stage pending" id="stage-EXECUTED">
+        <div class="stage-dot"></div>
+        <span class="stage-name">EXECUTED</span>
+        <span class="stage-actor">orchestrator</span>
+      </div>
+      <div class="stage-connector pending" id="conn-4"></div>
+      <div class="stage pending" id="stage-RESOLVED">
+        <div class="stage-dot"></div>
+        <span class="stage-name">RESOLVED</span>
+        <span class="stage-actor">orchestrator</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diagnosis Card -->
+  <div id="diagnosis-container"></div>
+
+  <div class="footer">
+    <p>Built with <a href="https://github.com/tofamba/fastapi-alertengine">FastAPI AlertEngine</a> ·
+    <a href="https://tofamba.com">Tofamba</a></p>
+  </div>
+</div>
+
+<script>
+function calculateHealthScore(p95, errorRate, anomalyScore) {
+  const p95Threshold = 300, p95Max = 3000;
+  let p95Score = 50;
+  if (p95 > p95Threshold) {
+    p95Score = 50 * Math.max(0, 1 - (p95 - p95Threshold) / (p95Max - p95Threshold));
+  }
+
+  const errorThreshold = 1, errorMax = 20;
+  let errorScore = 30;
+  if (errorRate > errorThreshold) {
+    errorScore = 30 * Math.max(0, 1 - (errorRate - errorThreshold) / (errorMax - errorThreshold));
+  }
+
+  const anomalyThreshold = 0.5, anomalyMax = 5;
+  let anomalyComponent = 20;
+  if (anomalyScore > anomalyThreshold) {
+    anomalyComponent = 20 * Math.max(0, 1 - (anomalyScore - anomalyThreshold) / (anomalyMax - anomalyThreshold));
+  }
+
+  return Math.round(Math.max(0, p95Score + errorScore + anomalyComponent));
+}
+
+function getScoreColor(score) {
+  if (score >= 70) return '#10b981';
+  if (score >= 40) return '#f59e0b';
+  return '#ef4444';
+}
+
+function getStatusLabel(score) {
+  if (score >= 70) return 'HEALTHY';
+  if (score >= 40) return 'WARNING';
+  return 'CRITICAL';
+}
+
+function getTrend(p95, prevP95) {
+  if (p95 > prevP95 * 1.1) return 'degrading';
+  if (p95 < prevP95 * 0.9) return 'improving';
+  return 'stable';
+}
+
+function getIncidentStage(score, errorRate) {
+  if (score >= 70) return null;
+  if (score < 40 || errorRate > 20) return 'VALIDATED';
+  return 'PROPOSED';
+}
+
+const DIAGNOSES = {
+  consensus: {
+    consensus: true,
+    modelA: {
+      model: 'claude-3-5-haiku', specialty: 'latency & database', category: 'DB_POOL',
+      cause: 'Database connection pool exhausted — connections not being released after query timeout.',
+      confidence: 0.87, logsToCheck: ['DB slow query log', 'Connection pool metrics']
+    },
+    modelB: {
+      model: 'claude-3-5-sonnet', specialty: 'network & dependencies', category: 'DB_POOL',
+      cause: 'Database connection pool exhausted — connections not being released after query timeout.',
+      confidence: 0.82, logsToCheck: ['DB slow query log', 'Connection pool metrics']
+    },
+    finalAction: 'Restart checkout worker pool',
+    finalConfidence: 0.87
+  },
+  dissent: {
+    consensus: false,
+    modelA: {
+      model: 'claude-3-5-haiku', specialty: 'latency & database', category: 'DB_LOCK',
+      cause: 'Database lock contention detected — multiple transactions waiting on the same row lock.',
+      confidence: 0.82, logsToCheck: ['DB slow query log', 'pg_locks table', 'Transaction wait events']
+    },
+    modelB: {
+      model: 'claude-3-5-sonnet', specialty: 'network & dependencies', category: 'UPSTREAM_TIMEOUT',
+      cause: 'Upstream API timeout — response times from /payments jumped 40x, cascading to checkout.',
+      confidence: 0.76, logsToCheck: ['Upstream API response times', 'Checkout service logs', 'Network latency metrics']
+    },
+    finalAction: 'Investigate upstream API before restarting workers',
+    finalConfidence: 0.60
+  }
+};
+
+let prevP95 = 200;
+let approveState = 'idle'; // idle | loading | done
+
+function nowUTC() {
+  return new Date().toISOString().replace('T', ' ').substring(0, 19) + 'Z';
+}
+
+function update() {
+  // Don't re-render diagnosis card if approval is in progress or done
+  const p95 = parseInt(document.getElementById('p95').value);
+  const errorRate = parseFloat(document.getElementById('error').value);
+  const anomalyScore = parseFloat(document.getElementById('anomaly').value);
+
+  document.getElementById('p95-value').textContent = p95 + 'ms';
+  document.getElementById('error-value').textContent = errorRate.toFixed(1) + '%';
+  document.getElementById('anomaly-value').textContent = anomalyScore.toFixed(1);
+
+  const score = calculateHealthScore(p95, errorRate, anomalyScore);
+  const color = getScoreColor(score);
+  const status = getStatusLabel(score);
+  const trend = getTrend(p95, prevP95);
+  prevP95 = p95;
+
+  // Gauge
+  const circumference = 2 * Math.PI * 72;
+  const arcLength = circumference * 0.75;
+  const valueLength = arcLength * (score / 100);
+  const gaugeArc = document.getElementById('gauge-arc');
+  gaugeArc.setAttribute('stroke-dasharray', valueLength + ' ' + circumference);
+  gaugeArc.setAttribute('stroke', color);
+  document.getElementById('gauge-score').textContent = score;
+  document.getElementById('gauge-score').setAttribute('fill', color);
+
+  const trendIcon = trend === 'degrading' ? '↓' : trend === 'improving' ? '↑' : '→';
+  const trendColor = trend === 'degrading' ? '#f87171' : trend === 'improving' ? '#34d399' : '#64748b';
+  document.getElementById('gauge-trend').textContent = trendIcon;
+  document.getElementById('gauge-trend').style.color = trendColor;
+  document.getElementById('gauge-status').textContent = status;
+  document.getElementById('gauge-status').style.color = color;
+
+  // Policy Gates
+  const healthyGate  = document.getElementById('gate-healthy');
+  const alertGate    = document.getElementById('gate-alert');
+  const validateGate = document.getElementById('gate-validate');
+
+  healthyGate.className  = 'gate inactive';
+  alertGate.className    = 'gate inactive';
+  validateGate.className = 'gate inactive';
+
+  if (score >= 70) {
+    healthyGate.className = 'gate healthy';
+  } else if (score < 40 || errorRate > 20) {
+    alertGate.className    = 'gate active';
+    validateGate.className = 'gate severe';
+  } else {
+    alertGate.className = 'gate active';
+  }
+
+  // Pipeline
+  const stage = getIncidentStage(score, errorRate);
+  updatePipeline(stage);
+
+  // Diagnosis — only update if not mid-approval
+  if (approveState === 'idle') {
+    updateDiagnosis(score, stage, errorRate);
+  }
+}
+
+function updatePipeline(stage) {
+  const stages = ['DETECTED', 'PROPOSED', 'VALIDATED', 'AUTHORIZED', 'EXECUTED', 'RESOLVED'];
+  stages.forEach((s, i) => {
+    const el   = document.getElementById('stage-' + s);
+    const conn = document.getElementById('conn-' + i);
+    if (!stage) {
+      el.className = 'stage pending';
+      if (conn) conn.className = 'stage-connector pending';
+      return;
+    }
+    const stageIdx   = stages.indexOf(stage);
+    const currentIdx = stages.indexOf(s);
+    if (currentIdx < stageIdx) {
+      el.className = 'stage completed';
+      if (conn) conn.className = 'stage-connector completed';
+    } else if (currentIdx === stageIdx) {
+      el.className = 'stage current';
+      if (conn) conn.className = 'stage-connector completed';
+    } else {
+      el.className = 'stage pending';
+      if (conn) conn.className = 'stage-connector pending';
+    }
+  });
+}
+
+function updateDiagnosis(score, stage, errorRate) {
+  const container = document.getElementById('diagnosis-container');
+  if (!stage || score >= 70) { container.innerHTML = ''; return; }
+
+  const useDissent = score < 30 || errorRate > 15;
+  const diag = useDissent ? DIAGNOSES.dissent : DIAGNOSES.consensus;
+  const headerClass = diag.consensus ? 'consensus' : 'dissent';
+  const titleText   = diag.consensus ? 'Diagnostic Council — Consensus' : 'Diagnostic Council — DISSENT ALERT';
+  const icon        = diag.consensus ? '✓' : '⚠';
+  const iconColor   = diag.consensus ? '#6ee7b7' : '#fbbf24';
+
+  let modelsHtml = '';
+  if (diag.consensus) {
+    modelsHtml = `
+      <div class="model-block consensus">
+        <div class="model-header">
+          <div>
+            <p class="model-name">Diagnostic Council (Consensus)</p>
+            <p class="model-spec">${diag.modelA.model} · ${diag.modelA.specialty}</p>
+          </div>
+          <span class="model-category">${diag.modelA.category}</span>
+        </div>
+        <p class="model-cause">${diag.modelA.cause}</p>
+        <div class="confidence-bar">
+          <div class="confidence-track"><div class="confidence-fill" style="width:${diag.modelA.confidence*100}%;background:#10b981;"></div></div>
+          <span class="confidence-value">${Math.round(diag.modelA.confidence*100)}%</span>
+        </div>
+        <div class="logs-check">
+          <p>Check</p>
+          ${diag.modelA.logsToCheck.map(l => `<div class="log-item">${l}</div>`).join('')}
+        </div>
+      </div>`;
+  } else {
+    modelsHtml = `
+      <div class="dissent-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="model-block">
+          <div class="model-header">
+            <div>
+              <p class="model-name">Theory A — Haiku</p>
+              <p class="model-spec">${diag.modelA.model} · ${diag.modelA.specialty}</p>
+            </div>
+            <span class="model-category">${diag.modelA.category}</span>
+          </div>
+          <p class="model-cause">${diag.modelA.cause}</p>
+          <div class="confidence-bar">
+            <div class="confidence-track"><div class="confidence-fill" style="width:${diag.modelA.confidence*100}%;background:#60a5fa;"></div></div>
+            <span class="confidence-value">${Math.round(diag.modelA.confidence*100)}%</span>
+          </div>
+          <div class="logs-check">
+            <p>Check</p>
+            ${diag.modelA.logsToCheck.map(l => `<div class="log-item">${l}</div>`).join('')}
+          </div>
+        </div>
+        <div class="model-block">
+          <div class="model-header">
+            <div>
+              <p class="model-name">Theory B — Sonnet</p>
+              <p class="model-spec">${diag.modelB.model} · ${diag.modelB.specialty}</p>
+            </div>
+            <span class="model-category">${diag.modelB.category}</span>
+          </div>
+          <p class="model-cause">${diag.modelB.cause}</p>
+          <div class="confidence-bar">
+            <div class="confidence-track"><div class="confidence-fill" style="width:${diag.modelB.confidence*100}%;background:#60a5fa;"></div></div>
+            <span class="confidence-value">${Math.round(diag.modelB.confidence*100)}%</span>
+          </div>
+          <div class="logs-check">
+            <p>Check</p>
+            ${diag.modelB.logsToCheck.map(l => `<div class="log-item">${l}</div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  container.innerHTML = `
+    <div class="diagnosis-card">
+      <div class="diagnosis-header ${headerClass}">
+        <div class="diagnosis-title" style="color:${iconColor}">
+          <span class="icon">${icon}</span>
+          <span>${titleText}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${!diag.consensus ? '<span class="diagnosis-badge" style="background:rgba(245,158,11,0.2);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);">SEVERE</span>' : ''}
+          <span class="diagnosis-badge">${diag.consensus ? 'Both models agree' : 'Models diverge'}</span>
+        </div>
+      </div>
+      <div class="diagnosis-body">
+        ${modelsHtml}
+        <div class="action-block">
+          <p>Suggested Recovery Action</p>
+          <p>${diag.finalAction}</p>
+          <div class="confidence-bar" style="margin-top:8px;">
+            <div class="confidence-track"><div class="confidence-fill" style="width:${diag.finalConfidence*100}%;background:#3b82f6;"></div></div>
+            <span class="confidence-value">${Math.round(diag.finalConfidence*100)}%</span>
+          </div>
+        </div>
+        <div class="auth-row">
+          <p class="auth-note">Nothing will execute without your approval. JWT-signed, 5-minute TTL.</p>
+          <div class="auth-buttons">
+            <button class="btn btn-secondary" onclick="dismiss()">Dismiss</button>
+            <button class="btn btn-primary" id="approve-btn" onclick="approve()">Approve Recovery</button>
+          </div>
+        </div>
+        <div id="audit-trail-container"></div>
+      </div>
+    </div>`;
+}
+
+function approve() {
+  approveState = 'loading';
+  const btn = document.getElementById('approve-btn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Authorizing…';
+
+  // Advance pipeline to AUTHORIZED immediately
+  const stages = ['DETECTED', 'PROPOSED', 'VALIDATED', 'AUTHORIZED', 'EXECUTED', 'RESOLVED'];
+  ['DETECTED','PROPOSED','VALIDATED','AUTHORIZED'].forEach((s, i) => {
+    document.getElementById('stage-' + s).className = 'stage completed';
+    const conn = document.getElementById('conn-' + i);
+    if (conn) conn.className = 'stage-connector completed';
+  });
+
+  const auditContainer = document.getElementById('audit-trail-container');
+  const t = nowUTC();
+
+  const entries = [
+    { stage: 'AUTHORIZED', actor: 'engineer',      detail: 'Approve tapped · JWT validated · policy_v1.2',      delay: 400  },
+    { stage: 'EXECUTED',   actor: 'orchestrator',  detail: 'Webhook called · POST /recover · 200 OK',           delay: 1200 },
+    { stage: 'RESOLVED',   actor: 'orchestrator',  detail: 'Health score recovered · incident closed',           delay: 2200 },
+  ];
+
+  entries.forEach(({ stage, actor, detail, delay }, idx) => {
+    setTimeout(() => {
+      // Advance pipeline dot
+      const el = document.getElementById('stage-' + stage);
+      if (el) el.className = 'stage completed';
+      const conn = document.getElementById('conn-' + (stages.indexOf(stage)));
+      if (conn) conn.className = 'stage-connector completed';
+
+      if (!auditContainer) return;
+      if (idx === 0) {
+        auditContainer.innerHTML = `
+          <div class="audit-trail">
+            <p class="audit-trail-title">Immutable Audit Trail</p>
+          </div>`;
+      }
+      const trail = auditContainer.querySelector('.audit-trail');
+      if (!trail) return;
+      const entry = document.createElement('div');
+      entry.className = 'audit-entry';
+      entry.style.animationDelay = '0ms';
+      entry.innerHTML = `
+        <span class="audit-check">✓</span>
+        <span class="audit-stage">${stage}</span>
+        <span class="audit-actor">${actor}</span>
+        <span class="audit-detail">${detail}</span>
+        <span class="audit-time">${t}</span>`;
+      trail.appendChild(entry);
+
+      if (idx === entries.length - 1) {
+        approveState = 'done';
+        if (btn) { btn.textContent = 'Resolved ✓'; }
+      }
+    }, delay);
+  });
+}
+
+function dismiss() {
+  approveState = 'idle';
+  document.getElementById('p95').value = 200;
+  document.getElementById('error').value = 1;
+  document.getElementById('anomaly').value = 0;
+  update();
+}
+
+document.getElementById('p95').addEventListener('input', update);
+document.getElementById('error').addEventListener('input', update);
+document.getElementById('anomaly').addEventListener('input', update);
+
+update();
+</script>
+</body>
+</html>
