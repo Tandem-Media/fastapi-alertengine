@@ -91,11 +91,14 @@ health_app = FastAPI(title="AlertEngine Orchestrator", lifespan=lifespan)
 health_app.state.limiter = limiter
 health_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Mount onboarding router
+# ── Routers ────────────────────────────────────────────────────────────────────
 from onboard import router as onboard_router
 from onboarding_api import router as onboarding_router
+from shadow_mode_api import router as shadow_router
+
 health_app.include_router(onboard_router)
 health_app.include_router(onboarding_router)
+health_app.include_router(shadow_router)
 
 import os as _os
 
@@ -468,7 +471,6 @@ async def recover_action_confirm(request: Request, token: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-
 # ── Auditor's One-Pager: PDF audit report ─────────────────────────────────────
 
 @health_app.get("/audit/{incident_id}/report", tags=["audit"])
@@ -653,7 +655,6 @@ async def github_webhook(request: Request):
         tenant_id = request.headers.get("X-AlertEngine-Tenant-ID", "")
 
         if not tenant_id:
-            # Try to match by repo URL if tenant has it configured
             tenant_id = body.get("repository", {}).get("name", "unknown")
 
         commits_stored = 0
