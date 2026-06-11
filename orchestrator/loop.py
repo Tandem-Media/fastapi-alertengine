@@ -65,6 +65,7 @@ async def claude_decide(health, incident=None, tenant_id="", recovery_url=""):
     if _has_council and _council_diagnose:
         return await _council_diagnose(health, incident, tenant_id, recovery_url)
     return await _claude_decide_single(health, incident, tenant_id, recovery_url)
+
 from policy import (
     should_alert,
     should_escalate_voice,
@@ -292,6 +293,7 @@ async def _execute_actions(
     incident: dict,
     health: dict,
     tenant: dict,
+    shadow_mode: bool = False,
 ) -> dict:
     tenant_id   = tenant["tenant_id"]
     incident_id = incident.get("incident_id", "unknown")
@@ -304,6 +306,21 @@ async def _execute_actions(
         action_type = action.get("type")
 
         if action_type == "SEND_NOTIFICATION":
+            if shadow_mode:
+                append_event(
+                    incident_id=incident_id,
+                    stage=stage,
+                    decision="shadow",
+                    reason=f"[SHADOW] Would have sent {action.get('payload', {}).get('type')} notification",
+                    confidence=0.0,
+                    actor="shadow_mode",
+                    tenant_id=tenant_id,
+                    metadata={"shadow_mode": True, "suppressed_action": action},
+                )
+                logger.info("[SHADOW][%s] Suppressed notification: %s",
+                            tenant_id, action.get("payload", {}).get("type"))
+                continue
+
             if not can_send_notifications():
                 logger.warning(
                     "EMERGENCY: notification suppressed | %s", incident_id)
@@ -328,6 +345,20 @@ async def _execute_actions(
                     incident_id, score, duration_s=duration))
 
         elif action_type == "GENERATE_TOKEN":
+            if shadow_mode:
+                append_event(
+                    incident_id=incident_id,
+                    stage=stage,
+                    decision="shadow",
+                    reason="[SHADOW] Would have generated recovery token",
+                    confidence=0.0,
+                    actor="shadow_mode",
+                    tenant_id=tenant_id,
+                    metadata={"shadow_mode": True, "suppressed_action": action},
+                )
+                logger.info("[SHADOW][%s] Suppressed token generation", tenant_id)
+                continue
+
             if not can_mutate_state():
                 continue
             token = generate_recovery_token(incident_id, tenant_id=tenant_id)
@@ -335,6 +366,20 @@ async def _execute_actions(
             incident = {**incident, "token": token, "recovery_url": url}
 
         elif action_type == "ESCALATE":
+            if shadow_mode:
+                append_event(
+                    incident_id=incident_id,
+                    stage=stage,
+                    decision="shadow",
+                    reason="[SHADOW] Would have escalated",
+                    confidence=0.0,
+                    actor="shadow_mode",
+                    tenant_id=tenant_id,
+                    metadata={"shadow_mode": True, "suppressed_action": action},
+                )
+                logger.info("[SHADOW][%s] Suppressed escalation", tenant_id)
+                continue
+
             plan = get_tenant_plan(tenant)
             if not plan.has_voice_escalation:
                 logger.warning(
@@ -352,9 +397,14 @@ async def _execute_actions(
 # ── Single tenant processing ───────────────────────────────────────────────────
 
 async def _process_tenant(tenant: dict) -> None:
-    tenant_id  = tenant["tenant_id"]
-    health_url = tenant["health_url"]
-    mode       = current_mode()
+    tenant_id   = tenant["tenant_id"]
+    health_url  = tenant["health_url"]
+    mode        = current_mode()
+    shadow_mode = bool(tenant.get("shadow_mode", False))
+
+    if shadow_mode:
+        logger.info("[SHADOW][%s] Shadow mode active — no external calls will fire",
+                    tenant_id)
 
     health = await _fetch_health(health_url)
     if not health:
@@ -368,20 +418,15 @@ async def _process_tenant(tenant: dict) -> None:
     err    = m.get("error_rate", 0)
     now    = time.time()
 
-    logger.info("[%s] Health: %s | score=%.0f | mode=%s",
-                tenant_id, status, score, mode)
+    logger.info("[%s] Health: %s | score=%.0f | mode=%s | shadow=%s",
+                tenant_id, status, score, mode, shadow_mode)
 
     # ── Update baseline on healthy polls only ─────────────────────────────────
-    # IMPORTANT: Never update baseline during degraded/incident periods.
-    # Learning from P95=8000ms would poison the baseline, making future
-    # incidents appear as "only 1.2x baseline" when they are actually severe.
     if status == "healthy" and score >= 80:
         _update_baseline_safe(tenant_id, health)
-    # Baseline is NOT updated during unhealthy periods — done after incident load below
 
     incident = _get_tenant_incident(tenant_id)
 
-    # Log baseline skip reason now that incident state is known
     if status != "healthy" and incident is not None:
         logger.debug(
             "[%s] Baseline update skipped — active incident, status=%s score=%.0f",
@@ -398,7 +443,6 @@ async def _process_tenant(tenant: dict) -> None:
             if not lease:
                 return
 
-            # Double-check inside lock
             existing_incident = _get_tenant_incident(tenant_id)
             if not should_open_new_incident(existing_incident):
                 return
@@ -408,7 +452,6 @@ async def _process_tenant(tenant: dict) -> None:
                 incident_id, "DETECTED", "OPEN_INCIDENT"
             )
 
-            # Idempotency gate — claim_action is atomic SET NX
             if not claim_action(creation_key, {
                 "tenant_id":   tenant_id,
                 "incident_id": incident_id,
@@ -420,7 +463,6 @@ async def _process_tenant(tenant: dict) -> None:
             if not should_alert(score, err):
                 return
 
-            # Plan gates
             if not can_monitor_more_services(tenant):
                 logger.warning(
                     "[%s] Service limit reached for plan %s — suppressed",
@@ -441,7 +483,6 @@ async def _process_tenant(tenant: dict) -> None:
                     tenant_id, tenant.get("plan", "solo"))
                 return
 
-            # Check lease is still valid before expensive Claude call
             if not lease.valid:
                 logger.warning(
                     "Lease lost before Claude call | %s", tenant_id)
@@ -477,16 +518,18 @@ async def _process_tenant(tenant: dict) -> None:
                 actor=decision.get("actor", claude.get("actor", "pipeline")),
                 tenant_id=tenant_id,
                 metadata={
-                    "council_mode":  claude.get("mode", "single"),
-                    "diverged":      claude.get("diverged", False),
-                    "diagnosis_a":   claude.get("diagnosis_a"),
-                    "diagnosis_b":   claude.get("diagnosis_b"),
+                    "council_mode":   claude.get("mode", "single"),
+                    "diverged":       claude.get("diverged", False),
+                    "diagnosis_a":    claude.get("diagnosis_a"),
+                    "diagnosis_b":    claude.get("diagnosis_b"),
                     "policy_version": _POLICY_VERSION,
+                    "shadow_mode":    shadow_mode,
                 },
             )
 
             await _execute_actions(
-                decision["actions"], incident_record, health, tenant)
+                decision["actions"], incident_record, health, tenant,
+                shadow_mode=shadow_mode)
         return
 
     if incident is None:
@@ -499,7 +542,6 @@ async def _process_tenant(tenant: dict) -> None:
         if not lease:
             return
 
-        # Check lease before Claude call
         if not lease.valid:
             logger.warning(
                 "Lease lost before processing | %s", incident_id)
@@ -523,7 +565,6 @@ async def _process_tenant(tenant: dict) -> None:
                 resolve_incident(incident_id)
                 _clear_tenant_active(tenant_id)
 
-                # Clear diagnosis memory on resolve
                 try:
                     from diagnosis_memory import clear_history
                     clear_history(incident_id)
@@ -536,10 +577,14 @@ async def _process_tenant(tenant: dict) -> None:
                     confidence=decision["confidence"],
                     actor=decision.get("actor", claude.get("actor", "pipeline")),
                     tenant_id=tenant_id,
-                    metadata={"policy_version": _POLICY_VERSION},
+                    metadata={
+                        "policy_version": _POLICY_VERSION,
+                        "shadow_mode":    shadow_mode,
+                    },
                 )
                 await _execute_actions(
-                    decision["actions"], updated, health, tenant)
+                    decision["actions"], updated, health, tenant,
+                    shadow_mode=shadow_mode)
             return
 
         # Pipeline advance
@@ -554,7 +599,6 @@ async def _process_tenant(tenant: dict) -> None:
         if not next_stage or not can_mutate_state():
             return
 
-        # Check lease is still valid before state mutation
         if not lease.valid:
             logger.warning(
                 "Lease lost before transition | %s", incident_id)
@@ -562,7 +606,8 @@ async def _process_tenant(tenant: dict) -> None:
 
         updated = apply_transition(incident, next_stage)
         updated = await _execute_actions(
-            decision["actions"], updated, health, tenant)
+            decision["actions"], updated, health, tenant,
+            shadow_mode=shadow_mode)
         save_incident(updated)
         append_event(
             incident_id=incident_id, stage=next_stage,
@@ -571,7 +616,10 @@ async def _process_tenant(tenant: dict) -> None:
             actor=decision.get("actor", claude.get("actor", "pipeline")),
             action_id=make_action_id(incident_id, next_stage, "TRANSITION"),
             tenant_id=tenant_id,
-            metadata={"policy_version": _POLICY_VERSION},
+            metadata={
+                "policy_version": _POLICY_VERSION,
+                "shadow_mode":    shadow_mode,
+            },
         )
 
         # Escalations
@@ -581,18 +629,34 @@ async def _process_tenant(tenant: dict) -> None:
             if can_escalate():
                 updated["voice_sent"] = True
                 save_incident(updated)
-                fire(_notify_tenant(
-                    tenant_id, incident_id, next_stage, "VOICE",
-                    send_voice_escalation, incident_id, duration, score))
+                if not shadow_mode:
+                    fire(_notify_tenant(
+                        tenant_id, incident_id, next_stage, "VOICE",
+                        send_voice_escalation, incident_id, duration, score))
+                else:
+                    append_event(
+                        incident_id=incident_id, stage=next_stage,
+                        decision="shadow", reason="[SHADOW] Would have sent voice escalation",
+                        confidence=0.0, actor="shadow_mode", tenant_id=tenant_id,
+                        metadata={"shadow_mode": True},
+                    )
 
         if not incident.get("secondary_sent") and \
                 should_escalate_secondary(duration, score):
             if can_escalate():
                 updated["secondary_sent"] = True
                 save_incident(updated)
-                fire(_notify_tenant(
-                    tenant_id, incident_id, next_stage, "SECONDARY",
-                    send_secondary_escalation, incident_id, duration, score))
+                if not shadow_mode:
+                    fire(_notify_tenant(
+                        tenant_id, incident_id, next_stage, "SECONDARY",
+                        send_secondary_escalation, incident_id, duration, score))
+                else:
+                    append_event(
+                        incident_id=incident_id, stage=next_stage,
+                        decision="shadow", reason="[SHADOW] Would have sent secondary escalation",
+                        confidence=0.0, actor="shadow_mode", tenant_id=tenant_id,
+                        metadata={"shadow_mode": True},
+                    )
 
 
 # ── Main loop ──────────────────────────────────────────────────────────────────
