@@ -22,8 +22,7 @@ from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 from tenants import get_tenant, save_tenant
-from audit import get_events
-
+from audit import get_audit_log
 logger = logging.getLogger("orchestrator.shadow_mode_api")
 
 router = APIRouter(prefix="/tenant", tags=["shadow-mode"])
