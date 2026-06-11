@@ -21,6 +21,32 @@ The goal is not autonomous remediation. The goal is **accountable remediation**.
 
 ---
 
+## The Customer Journey
+
+```
+pip install fastapi-alertengine
+        ↓
+Free SDK — detect incidents locally, forever
+        ↓
+Shadow Mode — observe governance without executing (self-serve, free)
+        ↓
+Governance Report — see what AlertEngine would have done
+        ↓
+Growth — enable human-authorized recovery ($99/mo)
+        ↓
+Team — Diagnostic Council, multi-service ($299/mo)
+        ↓
+Compliance — audit exports, DLQ, voice escalation ($799/mo)
+```
+
+**All new tenants begin in Shadow Mode by default.**
+
+AlertEngine observes incidents, generates diagnoses, evaluates policies, and records audit trails without executing recovery actions. Approval workflows are enabled only when a tenant explicitly chooses to place AlertEngine in the decision path.
+
+This is not a limitation. It is a governance-first design principle.
+
+---
+
 ## The Governance Model
 
 Most monitoring tools detect incidents and alert you. AlertEngine detects, diagnoses, asks permission, executes, and proves it — in that order, every time.
@@ -163,12 +189,55 @@ Drag P95 latency to 3000ms and watch health score, policy gates, and incident pi
 - **Step 1:** `instrument(app)` — P95 latency tracking, error rate detection, health scoring begins immediately
 - **Step 2:** `GET /health/alerts` — returns P95, error rate, health score 0-100, trend direction
 
-**Paid Orchestrator (Steps 3–6) — runs on Tofamba's servers:**
+**Shadow Mode (Step 3) — self-serve, free:**
 
-- **Step 3:** Managed orchestrator polls `/health/alerts` every 5 seconds. Deterministic policy gates run first. If all gates pass, Claude AI diagnoses root cause in plain English.
-- **Step 4:** WhatsApp or Telegram alert arrives with AI diagnosis and a single-use recovery link.
+- **Step 3:** Register a tenant and enable Shadow Mode. The managed orchestrator polls `/health/alerts` every 5 seconds, runs full incident detection, AI diagnosis, and policy evaluation — but suppresses all external calls. Every decision is logged to the audit trail. Nothing touches production.
+
+**Paid Orchestrator (Steps 4–6) — runs on Tofamba's servers:**
+
+- **Step 4:** Enable approval workflow. WhatsApp or Telegram alert arrives with AI diagnosis and a single-use recovery link.
 - **Step 5:** You tap approve. Nothing executes without you.
 - **Step 6:** Your recovery webhook executes. Every stage is logged immutably.
+
+---
+
+## Shadow Mode
+
+Shadow Mode is the default evaluation experience for all new tenants.
+
+**What runs in Shadow Mode:**
+- Health polling every 5 seconds
+- Incident detection via deterministic policy gates
+- AI diagnosis (Diagnostic Council or single model)
+- Full pipeline state transitions: DETECTED → PROPOSED → VALIDATED
+- Complete audit trail with actor attribution
+
+**What is suppressed in Shadow Mode:**
+- WhatsApp and Telegram notifications
+- Recovery token generation
+- Webhook execution
+- Voice escalation
+
+Every suppressed action is logged to the audit trail with `actor: "shadow_mode"` so you can see exactly what would have happened.
+
+**Shadow Mode API:**
+
+```bash
+# Enable shadow mode
+POST /tenant/{tenant_id}/shadow
+Headers: X-Tenant-Secret: your-secret
+
+# Check status
+GET /tenant/{tenant_id}/shadow
+
+# Get governance report
+GET /tenant/{tenant_id}/shadow/report
+
+# Go live
+DELETE /tenant/{tenant_id}/shadow
+```
+
+**The governance report** shows what AlertEngine would have done during your evaluation period — every suppressed notification, token generation, and escalation, with incident counts. Use it to demonstrate reliability to risk committees before going live.
 
 ---
 
@@ -181,8 +250,14 @@ FastAPI app                           Orchestrator (polls every 5s)
   instrument(app)                       ↓ policy gates (deterministic)
   ↓                                     ↓ AI diagnosis (advisory only)
 Redis Streams ──→ /health/alerts ──→    ↓ confidence-gated
-  append-only        P95 · score        WhatsApp / Telegram alert
-  event log          · trend              diagnosis · recovery link
+  append-only        P95 · score
+  event log          · trend        Shadow Mode (default)
+                                      ↓ log everything
+                                      ↓ execute nothing
+
+                                    Live Mode (opt-in)
+                                      ↓ WhatsApp / Telegram alert
+                                          diagnosis · recovery link
                                           single-use JWT · 5 min TTL
                                           ↓ engineer taps approve
                                         POST /action/recover/confirm
@@ -217,14 +292,13 @@ Full state machine with transition guards: [docs/ARCHITECTURE.md](docs/ARCHITECT
 | `claude` | AI diagnosis and recommendation | "Database connection pool exhausted" |
 | `engineer` | Human authorization | Taps "Approve" on WhatsApp |
 | `orchestrator` | State machine execution | Webhook called, transition applied |
+| `shadow_mode` | Suppressed action in evaluation | "Would have sent VALIDATION notification" |
 
 Every transition is logged with actor, confidence, reason, and policy version.  
 State is derived from events — not stored as truth.  
 Redis loss → full replay from the audit ledger.
 
 > **Why this matters for compliance:** "The system fixed itself" is not an acceptable answer. AlertEngine produces: "Engineer X authorized action Y at time Z under policy version W."
-
-The moat is the governance layer: `incident_policy.py`, `audit.py`, `delivery_ledger.py`, `idempotency.py`, and the human-approval workflow. Together they create a system that can explain, authorize, execute, and prove operational decisions afterward — with or without AI involvement.
 
 | Principle | Enforcement |
 |---|---|
@@ -233,6 +307,7 @@ The moat is the governance layer: `incident_policy.py`, `audit.py`, `delivery_le
 | Nothing executes without approval | `POST /action/recover/confirm` requires valid JWT |
 | Every action logged immutably | `append_event()` on every transition, every actor |
 | Deterministic alert rules | `incident_policy.py` — single versioned POLICY dict |
+| Shadow before live | All tenants observe before executing |
 
 ---
 
@@ -274,20 +349,6 @@ The moat is the governance layer: `incident_policy.py`, `audit.py`, `delivery_le
     }
   ]
 }
-```
-
-**Pipeline**
-
-```
-FastAPI Request
-↓
-RequestMetricsMiddleware  ← measures latency + status
-↓
-Redis Streams             ← append-only event log
-↓
-Alert Engine              ← P95 + error rate + anomaly scoring
-↓
-/health/alerts            ← single status: ok | warning | critical
 ```
 
 ---
@@ -371,6 +432,7 @@ Set up via GitHub webhook → `POST /commits/webhook`.
 | Tier | Price | Services | Incidents/mo | Channels |
 |---|---|---|---|---|
 | Free | $0 | — | — | SDK only |
+| Shadow Mode | $0 | 1 | Unlimited | Audit trail only |
 | Starter | $19/mo | 1 | 5 | Telegram |
 | Growth | $99/mo | 1 | 10 | WhatsApp + AI diagnosis |
 | Team | $299/mo | 3 | 50 | WhatsApp + Telegram + Council |
@@ -383,6 +445,10 @@ Set up via GitHub webhook → `POST /commits/webhook`.
 **Free — $0**  
 Detection SDK. MIT licensed. Runs on your servers. P95 tracking, health score, anomaly detection.  
 *The catch: You see the score drop. You don't know why. You don't get alerts. You don't get recovery links. That's the orchestrator.*
+
+**Shadow Mode — $0**  
+Full orchestrator pipeline in observation mode. Incident detection, AI diagnosis, policy evaluation, and audit trail — without executing anything. Self-serve. No call required.  
+*For teams who need to prove the system works before placing it in the decision path.*
 
 **Starter — $19/mo**  
 Your first production app. Telegram alerts. Basic detection.  
@@ -410,13 +476,11 @@ SOC 2 Type II audit costs $15,000–$50,000. Compliance is $799/month — insura
 **Platform — $1,500/mo**  
 Custom policy thresholds. 20 services. Enterprise-grade.  
 Custom `POLICY_RECOVER_SCORE`, `POLICY_VALIDATE_ERROR_RATE` adapted to your baselines. Custom webhook routing. Priority support (24-hour response).  
-Generic thresholds don't work at scale — your P95 normal might be 200ms, not 120ms.  
 *Best for: Multi-team platforms, African fintech with 100K+ users, teams with established operational baselines.*
 
 **Enterprise — Custom**  
 Dedicated deployment. Custom SLA. Procurement-ready.  
 Unlimited services and incidents. Dedicated managed instance. Data residency options. Annual contracts, POs, vendor security questionnaires. White-glove onboarding.  
-Enterprise monitoring contracts run $50,000–$500,000/year. AlertEngine Enterprise is a fraction of that, with human authorization and audit trails they don't have.  
 *Best for: Banks, insurance companies, health systems, government agencies, African CBDC infrastructure.*
 
 ---
@@ -449,6 +513,7 @@ to production infrastructure.
 | Degraded mode handling | NORMAL / DEGRADED / EMERGENCY with automatic transitions |
 | Recovery accountability | Who approved, when, what executed — all timestamped |
 | Deterministic alert rules | Single policy file; versionable; env-configurable |
+| Shadow before live | All tenants observe before executing — governance by default |
 
 ---
 
@@ -486,9 +551,6 @@ to production infrastructure.
 | `COUNCIL_ENABLED` | No | Dual-model diagnosis (default: true) |
 | `GITHUB_TOKEN` | No | GitHub API for Diff-in-Pocket commit context |
 
-`ALERTENGINE_BASE_URL` is the orchestrator URL you receive after onboarding.  
-Your app's `/health/alerts` URL is configured per-tenant during onboarding.
-
 ---
 
 ## Repository Structure
@@ -513,6 +575,7 @@ orchestrator/           ← Source-available for security audit only
   audit.py             ← Immutable forensic log
   notifications.py     ← Multi-channel dispatch
   action_generator.py  ← JWT recovery token creation
+  shadow_mode_api.py   ← Shadow Mode management endpoints
   safe_payload.py      ← Schema drift protection
   plans.py             ← Billing tiers and feature gates
   See LICENSE-ORCHESTRATOR.md
@@ -550,11 +613,15 @@ This system was audited by an autonomous AI agent acting as a hostile tenant att
 pip install fastapi-alertengine
 ```
 
-**Managed orchestrator (Growth — $99/mo):**
+**Shadow Mode (self-serve, free):**
+
+Register a tenant and enable Shadow Mode — no call required. The orchestrator observes your stack and builds an audit trail. When you're ready to go live, enable the approval workflow.
 
 Contact: [tofambatech@outlook.com](mailto:tofambatech@outlook.com)
 
-Ready for accountable incident response? We'll configure your policy file, webhook, and first tenant.
+**Managed orchestrator (Growth — $99/mo):**
+
+Contact: [tofambatech@outlook.com](mailto:tofambatech@outlook.com)
 
 Full technical architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
@@ -571,7 +638,7 @@ P95 latency tracking, error rate detection, health scoring, anomaly detection. F
 Deterministic policy gates, AI-assisted diagnosis, human authorization, webhook execution, immutable audit trail. Managed orchestrator, end-to-end validated.
 
 **Phase 3 — Decision Governance ✅ In progress**  
-Diagnostic Council (dual-model adversarial deliberation, live — `COUNCIL_ENABLED=true` by default), Diff-in-Pocket commit correlation, policy versioning, actor attribution, Auditor's One-Pager PDF. The audit trail as a compliance asset. Human authorization as metastability defense (Demirbas et al., ACM CAIS 2026).
+Diagnostic Council (dual-model adversarial deliberation, live — `COUNCIL_ENABLED=true` by default), Diff-in-Pocket commit correlation, policy versioning, actor attribution, Shadow Mode (self-serve evaluation), Auditor's One-Pager PDF. The audit trail as a compliance asset. Human authorization as metastability defense (Demirbas et al., ACM CAIS 2026).
 
 **Phase 4 — Governance Simulation 🔭 Future direction**  
 Before trusting a process during an emergency, test the process itself.
@@ -591,6 +658,9 @@ Most incident tools cannot answer that question. AlertEngine's architecture is d
 **Can I self-host the orchestrator?**  
 No. The orchestrator is source-available for audit, hosted and managed by Tofamba. Enterprise gets a dedicated deployment under a custom SLA.
 
+**What is Shadow Mode?**  
+Shadow Mode is the default evaluation state for all new tenants. The full pipeline runs — detection, diagnosis, policy evaluation, audit trail — but no external calls fire. No WhatsApp messages, no recovery tokens, no webhook execution. Every suppressed action is logged. You can observe for days or months before going live. Enable via `POST /tenant/{id}/shadow`. Disable to go live via `DELETE /tenant/{id}/shadow`.
+
 **What happens if Claude is unavailable?**  
 The system fails safe — falls back to deterministic policy rules. The audit log records `actor: "policy"`. No silent failures.
 
@@ -598,7 +668,7 @@ The system fails safe — falls back to deterministic policy rules. The audit lo
 The orchestrator retries 3 times with exponential backoff. On failure, the incident is captured in the Dead Letter Queue for manual replay. Available on Compliance tier and above.
 
 **Can I start free and upgrade?**  
-Yes. `pip install fastapi-alertengine` is MIT licensed and never expires. The free SDK runs forever on your servers. Upgrade to a managed tier whenever you need alerts and diagnosis.
+Yes. `pip install fastapi-alertengine` is MIT licensed and never expires. Shadow Mode is free. Upgrade to a managed tier when you're ready for live recovery.
 
 **Is the audit trail really immutable?**  
 Yes. `audit.py` uses Redis LIST with `rpush` — append only, never mutated. Every event includes actor, stage, confidence, reason, and policy version. Replay reconstructs state from events, not from stored state.
