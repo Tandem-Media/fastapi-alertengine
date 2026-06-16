@@ -448,7 +448,7 @@ Detection SDK. MIT licensed. Runs on your servers. P95 tracking, health score, a
 
 **Shadow Mode — $0**  
 Full orchestrator pipeline in observation mode. Incident detection, AI diagnosis, policy evaluation, and audit trail — without executing anything. Self-serve. No call required.  
-*For teams who need to prove the system works before placing it in the decision path.*
+*For teams who need to prove the system works before placing it in the decision path. 30-day evaluation. Governance Report included. Convert to Growth to go live.*
 
 **Starter — $19/mo**  
 Your first production app. Telegram alerts. Basic detection.  
@@ -651,6 +651,10 @@ Most incident tools cannot answer that question. AlertEngine's architecture is d
 
 *Inspired by: Demirbas, Charapko, Vig — "A Case for Simulation-Driven Resilience in Agentic Data Systems" (ACM CAIS 2026). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)*
 
+**Future Direction: Agent Governance**
+
+The same governance architecture that authorizes recovery actions today can also supervise autonomous systems and AI agents, creating an auditable human-in-the-loop control plane for automated operations.
+
 ---
 
 ## FAQ
@@ -659,7 +663,7 @@ Most incident tools cannot answer that question. AlertEngine's architecture is d
 No. The orchestrator is source-available for audit, hosted and managed by Tofamba. Enterprise gets a dedicated deployment under a custom SLA.
 
 **What is Shadow Mode?**  
-Shadow Mode is the default evaluation state for all new tenants. The full pipeline runs — detection, diagnosis, policy evaluation, audit trail — but no external calls fire. No WhatsApp messages, no recovery tokens, no webhook execution. Every suppressed action is logged. You can observe for days or months before going live. Enable via `POST /tenant/{id}/shadow`. Disable to go live via `DELETE /tenant/{id}/shadow`.
+Shadow Mode is the default evaluation state for all new tenants. The full pipeline runs — detection, diagnosis, policy evaluation, audit trail — but no external calls fire. No WhatsApp messages, no recovery tokens, no webhook execution. Every suppressed action is logged. Shadow Mode evaluation runs for up to 30 days. At the end of the evaluation period you receive a Governance Report and choose whether to go live. No pressure — but no indefinite free orchestrator either. Enable via `POST /tenant/{id}/shadow`. Disable to go live via `DELETE /tenant/{id}/shadow`.
 
 **What happens if Claude is unavailable?**  
 The system fails safe — falls back to deterministic policy rules. The audit log records `actor: "policy"`. No silent failures.
