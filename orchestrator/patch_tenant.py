@@ -4,7 +4,7 @@ Run from inside orchestrator/ with REDIS_URL pointed at the public
 Railway Redis connection string.
 """
 import os
-os.environ['REDIS_URL'] = 'paste-the-public-redis-url-here'
+os.environ['REDIS_URL'] = redis://default:eOctWyUYOtYWucQJdgbyeFMTlvGJOPbs@thomas.proxy.rlwy.net:43403
 
 import secrets
 import time
