@@ -255,6 +255,7 @@ async def dispatch(
     from providers import (
         WhatsAppProvider, TelegramProvider,
         WebhookProvider, SentProvider, SlackProvider,
+        MetaDirectProvider,
     )
     from delivery_ledger import record_from_result
 
@@ -265,6 +266,8 @@ async def dispatch(
         primary = TelegramProvider()
     elif channel == "sent":
         primary = SentProvider()
+    elif channel == "whatsapp_meta":
+        primary = MetaDirectProvider()
     else:
         primary = WhatsAppProvider()
 

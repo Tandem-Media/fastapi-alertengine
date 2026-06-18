@@ -35,7 +35,7 @@ _SAFE_TENANT_FIELDS = {
 
 _SECRET_FIELDS = {
     "twilio_auth_token", "twilio_account_sid", "twilio_whatsapp_from",
-    "sent_api_key", "sent_phone_id", "slack_webhook_url",
+    "sent_api_key", "sent_phone_id", "meta_access_token", "meta_phone_number_id", "slack_webhook_url",
     "telegram_bot_token", "alert_secret", "api_key", "secret",
 }
 
@@ -78,6 +78,8 @@ class OnboardRequest(BaseModel):
     twilio_whatsapp_from:   Optional[str] = None
     sent_api_key:           Optional[str] = None
     sent_phone_id:          Optional[str] = None
+    meta_access_token:      Optional[str] = None
+    meta_phone_number_id:   Optional[str] = None
     slack_webhook_url:      Optional[str] = None
     slack_channel:          Optional[str] = None
     recovery_webhook_url:   Optional[str] = None
@@ -86,6 +88,10 @@ class OnboardRequest(BaseModel):
 class VerifyRequest(BaseModel):
     phone: str
     code:  str
+
+
+class TelegramDetectRequest(BaseModel):
+    telegram_bot_token: str
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -154,6 +160,61 @@ async def _send_welcome_message(tenant: dict, phone: str) -> None:
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
+@router.post("/telegram/detect-chat-id")
+async def detect_telegram_chat_id(req: TelegramDetectRequest):
+    """
+    Helper for the onboarding page.
+
+    Given a bot token, calls Telegram's getUpdates and returns the most
+    recent chat that messaged the bot. Saves a person from manually
+    opening Telegram's raw JSON response and reading a chat_id out of it
+    by hand.
+
+    The bot must have already received at least one message — Telegram
+    only returns chats that have messaged the bot at least once.
+    """
+    import httpx as _httpx
+
+    token = req.telegram_bot_token.strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="telegram_bot_token is required")
+
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    try:
+        async with _httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(url)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not reach Telegram: {e}")
+
+    if resp.status_code == 404:
+        raise HTTPException(
+            status_code=400,
+            detail="Telegram doesn't recognize that bot token. Check it and try again.",
+        )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail=f"Telegram returned {resp.status_code}")
+
+    data    = resp.json()
+    results = data.get("result", [])
+    if not results:
+        raise HTTPException(
+            status_code=404,
+            detail="No messages found yet. Open a chat with your bot in Telegram, send it any message, then try again.",
+        )
+
+    last = results[-1]
+    chat = last.get("message", {}).get("chat", {})
+    chat_id = chat.get("id")
+    if chat_id is None:
+        raise HTTPException(status_code=404, detail="Couldn't find a chat ID in Telegram's response.")
+
+    return {
+        "chat_id":    str(chat_id),
+        "chat_type":  chat.get("type"),
+        "first_name": chat.get("first_name"),
+    }
+
+
 @router.post("/onboard")
 def onboard(req: OnboardRequest):
     """
@@ -168,11 +229,18 @@ def onboard(req: OnboardRequest):
     Store it now — it's required to call the shadow-mode endpoints and
     any other tenant-scoped admin action for this tenant.
     """
-    if req.notification_channel in ("whatsapp", "sent") and not req.whatsapp_numbers:
+    if req.notification_channel in ("whatsapp", "sent", "whatsapp_meta") and not req.whatsapp_numbers:
         raise HTTPException(status_code=400, detail="At least one WhatsApp number required")
 
     if not req.health_url.startswith("http"):
         raise HTTPException(status_code=400, detail="health_url must be a valid URL")
+
+    if req.notification_channel == "whatsapp_meta":
+        if not req.meta_access_token or not req.meta_phone_number_id:
+            raise HTTPException(
+                status_code=400,
+                detail="meta_access_token and meta_phone_number_id are required for the whatsapp_meta channel",
+            )
 
     if req.notification_channel == "telegram":
         if not req.telegram_bot_token or not req.telegram_chat_id:
@@ -202,6 +270,8 @@ def onboard(req: OnboardRequest):
         twilio_whatsapp_from=req.twilio_whatsapp_from,
         sent_api_key=req.sent_api_key,
         sent_phone_id=req.sent_phone_id,
+        meta_access_token=req.meta_access_token,
+        meta_phone_number_id=req.meta_phone_number_id,
         slack_webhook_url=req.slack_webhook_url,
         slack_channel=req.slack_channel,
         recovery_webhook_url=req.recovery_webhook_url,

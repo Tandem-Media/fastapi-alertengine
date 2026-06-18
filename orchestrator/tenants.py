@@ -48,6 +48,8 @@ def create_tenant(
     twilio_whatsapp_from: Optional[str] = None,
     sent_api_key: Optional[str] = None,
     sent_phone_id: Optional[str] = None,
+    meta_access_token: Optional[str] = None,
+    meta_phone_number_id: Optional[str] = None,
     slack_webhook_url: Optional[str] = None,
     slack_channel: Optional[str] = None,
     recovery_webhook_url: Optional[str] = None,
@@ -67,7 +69,7 @@ def create_tenant(
     tenant_secret = secrets.token_hex(32)
     now           = time.time()
 
-    initial_status = "active" if notification_channel == "telegram" else "pending_verification"
+    initial_status = "active" if notification_channel in ("telegram", "whatsapp_meta") else "pending_verification"
 
     tenant = {
         "schema_version":        "1.0.0",
@@ -87,6 +89,8 @@ def create_tenant(
         "twilio_whatsapp_from":  twilio_whatsapp_from,
         "sent_api_key":          sent_api_key,
         "sent_phone_id":         sent_phone_id,
+        "meta_access_token":     meta_access_token,
+        "meta_phone_number_id":  meta_phone_number_id,
         "slack_webhook_url":     slack_webhook_url,
         "slack_channel":         slack_channel,
         "recovery_webhook_url":  recovery_webhook_url,
