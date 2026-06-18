@@ -52,15 +52,27 @@ def create_tenant(
     slack_channel: Optional[str] = None,
     recovery_webhook_url: Optional[str] = None,
 ) -> dict:
-    """Register a new tenant. Contacts start as unverified."""
-    tenant_id = str(uuid.uuid4())[:8]
-    now       = time.time()
+    """
+    Register a new tenant. Contacts start as unverified.
+
+    Every tenant is created with:
+      - a unique secret (used to authorize shadow-mode/admin actions
+        on this tenant — returned ONCE by the caller, never re-exposed)
+      - shadow_mode = True by default — new tenants always start in
+        observation mode. The pipeline runs normally but all external
+        calls (notifications, tokens, escalations) are suppressed and
+        logged to the audit trail until the tenant explicitly goes live.
+    """
+    tenant_id     = str(uuid.uuid4())[:8]
+    tenant_secret = secrets.token_hex(32)
+    now           = time.time()
 
     initial_status = "active" if notification_channel == "telegram" else "pending_verification"
 
     tenant = {
         "schema_version":        "1.0.0",
         "tenant_id":             tenant_id,
+        "secret":                tenant_secret,
         "service_name":          service_name,
         "health_url":            health_url,
         "status":                initial_status,
@@ -83,6 +95,9 @@ def create_tenant(
         "incidents_reset_at":    now,
         "billing_cycle_start":   now,
         "services_monitored":    [],
+        "shadow_mode":           True,
+        "shadow_enabled_at":     now,
+        "shadow_disabled_at":    None,
     }
 
     contacts = [
@@ -107,8 +122,10 @@ def create_tenant(
         except Exception as e:
             logger.error("create_tenant: failed to SADD to active set: %s", e)
 
-    logger.info("Tenant created: %s (%s) — %d contacts pending verification",
-                tenant_id, service_name, len(contacts))
+    logger.info(
+        "Tenant created: %s (%s) — %d contacts pending verification — shadow_mode=True",
+        tenant_id, service_name, len(contacts)
+    )
     return tenant
 
 
@@ -157,6 +174,23 @@ def migrate_tenant(data: dict) -> dict:
     if "incidents_reset_at" not in data:
         data["incidents_reset_at"] = data.get(
             "billing_cycle_start", time.time()
+        )
+    # Backfill for tenants created before secret/shadow_mode existed.
+    # Does NOT persist automatically — caller should save_tenant() after
+    # calling this if backfilled fields need to stick.
+    if "secret" not in data or not data.get("secret"):
+        data["secret"] = secrets.token_hex(32)
+        logger.warning(
+            "migrate_tenant: backfilled missing secret for tenant %s",
+            data.get("tenant_id", "unknown")
+        )
+    if "shadow_mode" not in data:
+        data["shadow_mode"] = True
+        data["shadow_enabled_at"] = time.time()
+        data["shadow_disabled_at"] = None
+        logger.warning(
+            "migrate_tenant: backfilled missing shadow_mode=True for tenant %s",
+            data.get("tenant_id", "unknown")
         )
     return data
 

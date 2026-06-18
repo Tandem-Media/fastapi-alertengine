@@ -30,12 +30,13 @@ _SAFE_TENANT_FIELDS = {
     "incident_count", "service_count", "whatsapp_numbers",
     "telegram_chat_id", "slack_channel",
     "recovery_webhook_url",  # OK — this is the customer's own webhook
+    "shadow_mode", "shadow_enabled_at", "shadow_disabled_at",
 }
 
 _SECRET_FIELDS = {
     "twilio_auth_token", "twilio_account_sid", "twilio_whatsapp_from",
     "sent_api_key", "sent_phone_id", "slack_webhook_url",
-    "telegram_bot_token", "alert_secret", "api_key",
+    "telegram_bot_token", "alert_secret", "api_key", "secret",
 }
 
 
@@ -117,12 +118,20 @@ async def _send_welcome_message(tenant: dict, phone: str) -> None:
     try:
         from notifications import dispatch
 
+        shadow_note = (
+            "\n\nThis tenant starts in Shadow Mode — AlertEngine will diagnose "
+            "and log everything, but won't take any action until you explicitly "
+            "go live. Call DELETE /tenant/{tenant_id}/shadow when you're ready.\n"
+            if tenant.get("shadow_mode") else ""
+        )
+
         message = (
             "✅ AlertEngine connected successfully.\n\n"
             f"Service: {tenant.get('service_name', '')}\n"
             f"Tenant: {tenant.get('tenant_id', '')}\n"
             f"Health URL: {tenant.get('health_url', '')}\n"
-            f"Notification: {tenant.get('notification_channel', '')}\n\n"
+            f"Notification: {tenant.get('notification_channel', '')}\n"
+            f"{shadow_note}\n"
             "Receiving live telemetry now.\n\n"
             "You will only be contacted when intervention \n"
             "may be required.\n\n"
@@ -150,6 +159,14 @@ def onboard(req: OnboardRequest):
     """
     Register a new tenant.
     Sends verification codes to all WhatsApp numbers.
+
+    The new tenant starts in Shadow Mode by default (full pipeline runs,
+    all external calls suppressed and logged). Call
+    DELETE /tenant/{tenant_id}/shadow to go live once you trust the signal.
+
+    The returned tenant_secret is shown ONCE, here, and never again.
+    Store it now — it's required to call the shadow-mode endpoints and
+    any other tenant-scoped admin action for this tenant.
     """
     if req.notification_channel in ("whatsapp", "sent") and not req.whatsapp_numbers:
         raise HTTPException(status_code=400, detail="At least one WhatsApp number required")
@@ -215,6 +232,8 @@ def onboard(req: OnboardRequest):
 
     return {
         "tenant_id":             tenant["tenant_id"],
+        "tenant_secret":         tenant["secret"],
+        "shadow_mode":           tenant.get("shadow_mode", True),
         "service_name":          tenant["service_name"],
         "notification_channel":  effective_channel,
         "status":                tenant["status"],
@@ -225,7 +244,13 @@ def onboard(req: OnboardRequest):
         "notification_config":   notification_config,
         "slack_configured":      bool(req.slack_webhook_url),
         "slack_available":       get_plan(req.plan).has_slack,
-        "next_step":             "POST /verify with your phone and code" if effective_channel in ("whatsapp", "sent") else "Tenant is active. Configure your bot and start monitoring.",
+        "next_step":             (
+            "POST /verify with your phone and code"
+            if effective_channel in ("whatsapp", "sent")
+            else "Tenant is active in Shadow Mode. Save your tenant_secret — "
+                 "call POST /tenant/{tenant_id}/test to trigger a test incident, "
+                 "or GET /tenant/{tenant_id}/shadow/report to see what's been observed."
+        ),
     }
 
 
@@ -295,7 +320,15 @@ def get_tenant_contacts(tenant_id: str):
 async def test_incident(tenant_id: str):
     """
     Trigger a simulated critical incident for a tenant.
-    Runs through the full pipeline — real notifications fire.
+
+    If the tenant is in Shadow Mode, the full pipeline runs (detection,
+    diagnosis, policy gates) but the notification is suppressed and logged
+    to the audit trail instead of sent — same as real production incidents
+    under Shadow Mode. Call GET /tenant/{tenant_id}/shadow/report afterward
+    to see it recorded.
+
+    If the tenant is live, a real notification fires via the configured
+    channel.
     """
     tenant = get_tenant(tenant_id)
     if not tenant:
@@ -347,8 +380,8 @@ async def test_incident(tenant_id: str):
 
     from pipeline import open_incident, decide_new_incident, validate_decision_schema
     from memory import save_incident, get_active_incident
-    from notifications import fire, send_detection
     from action_generator import generate_recovery_token
+    from audit import append_event
     import asyncio
 
     existing = get_active_incident(tenant_id=tenant_id)
@@ -366,7 +399,6 @@ async def test_incident(tenant_id: str):
     incident_record["tenant_id"] = tenant_id
     save_incident(incident_record)
 
-    from audit import append_event
     append_event(
         incident_id=incident_id,
         stage="DETECTED",
@@ -375,6 +407,34 @@ async def test_incident(tenant_id: str):
         confidence=0.95,
         tenant_id=tenant_id,
     )
+
+    # ── Shadow Mode gate ────────────────────────────────────────────────
+    # Mirrors the same suppression logic as loop.py's _execute_actions().
+    # If the tenant hasn't gone live, nothing external fires — the
+    # suppressed action is logged instead so the audit trail and the
+    # /shadow/report endpoint reflect exactly what would have happened.
+    if tenant.get("shadow_mode"):
+        append_event(
+            incident_id=incident_id,
+            stage="VALIDATED",
+            decision="shadow",
+            reason="[SHADOW] Would have sent test incident notification",
+            confidence=0.0,
+            actor="shadow_mode",
+            tenant_id=tenant_id,
+            metadata={"shadow_mode": True, "suppressed_action": "test_notification"},
+        )
+        return {
+            "incident_id":  incident_id,
+            "tenant_id":    tenant_id,
+            "status":       "triggered",
+            "shadow_mode":  True,
+            "notified":     [],
+            "message": (
+                "Test incident fired in Shadow Mode. No notification was sent. "
+                "Check GET /tenant/{tenant_id}/shadow/report to see it recorded."
+            ),
+        }
 
     verified = get_verified_numbers(tenant_id)
     base_url = os.getenv("ACTION_BASE_URL", os.getenv("ALERTENGINE_BASE_URL", "http://localhost:8000"))
@@ -399,6 +459,7 @@ async def test_incident(tenant_id: str):
         "incident_id":     incident_id,
         "tenant_id":       tenant_id,
         "status":          "triggered",
+        "shadow_mode":     False,
         "notified":        verified,
         "recovery_url":    url,
         "message":         "Test incident fired. Check WhatsApp.",
