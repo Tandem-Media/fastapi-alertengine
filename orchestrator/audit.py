@@ -88,6 +88,39 @@ def get_audit_log(incident_id: str) -> list:
         return []
 
 
+def get_audit_log_for_tenant(tenant_id: str) -> list:
+    """
+    Return all audit events across all incidents for a given tenant.
+
+    Audit events are stored per-incident (orchestrator:audit:{incident_id}),
+    with no separate tenant index. This scans current audit keys and filters
+    by the tenant_id recorded on each event. Audit keys expire after
+    AUDIT_TTL (7 days), so the keyspace this scans stays naturally bounded —
+    fine at current incident volume.
+
+    If incident volume grows enough that this scan becomes slow, replace
+    with a maintained per-tenant index (a Redis SET of incident_ids per
+    tenant, updated inside append_event) rather than scanning at read time.
+    """
+    try:
+        r = _redis()
+        events = []
+        for key in r.scan_iter(match=f"{AUDIT_PREFIX}*"):
+            raw_events = r.lrange(key, 0, -1)
+            for raw in raw_events:
+                try:
+                    entry = json.loads(raw)
+                except Exception:
+                    continue
+                if entry.get("tenant_id") == tenant_id:
+                    events.append(entry)
+        events.sort(key=lambda e: e.get("timestamp", 0))
+        return events
+    except Exception as e:
+        logger.error("get_audit_log_for_tenant failed for %s: %s", tenant_id, e)
+        return []
+
+
 def get_latest_stage(incident_id: str) -> Optional[str]:
     """Return the most recent stage from audit log."""
     log = get_audit_log(incident_id)
@@ -177,4 +210,4 @@ def replay_incident_state(incident_id: str) -> Optional[dict]:
     }
 
     logger.info("Replay complete: %s → stage=%s", incident_id, current_stage)
-    return reconstructed                                
+    return reconstructed

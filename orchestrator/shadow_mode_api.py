@@ -22,7 +22,8 @@ from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 from tenants import get_tenant, save_tenant
-from audit import get_audit_log
+from audit import get_audit_log, get_audit_log_for_tenant
+
 logger = logging.getLogger("orchestrator.shadow_mode_api")
 
 router = APIRouter(prefix="/tenant", tags=["shadow-mode"])
@@ -207,9 +208,9 @@ async def get_shadow_report(
     tenant = _verify_tenant(tenant_id, x_tenant_secret)
 
     try:
-        events = get_events(tenant_id=tenant_id)
+        events = get_audit_log_for_tenant(tenant_id)
     except Exception as e:
-        logger.error("get_events failed for %s: %s", tenant_id, e)
+        logger.error("get_audit_log_for_tenant failed for %s: %s", tenant_id, e)
         events = []
 
     shadow_events = [
