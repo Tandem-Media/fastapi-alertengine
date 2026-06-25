@@ -86,6 +86,22 @@ async def lifespan(app: FastAPI):
 
 
 health_app = FastAPI(title="AlertEngine Orchestrator", lifespan=lifespan)
+from fastapi.middleware.cors import CORSMiddleware
+
+_cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+_cors_origins = (
+    ["*"] if _cors_origins_env.strip() == "*"
+    else [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+)
+
+health_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["x-tenant-secret"],
+)
 
 # Wire rate limiter into app
 health_app.state.limiter = limiter
