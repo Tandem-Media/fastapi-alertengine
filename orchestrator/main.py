@@ -184,19 +184,22 @@ def admin_tenants(admin_key: str):
 
         tenants = list_active_tenants()
         sanitized = [
-            {
-                "tenant_id": t.get("tenant_id"),
-                "service_name": t.get("service_name"),
-                "health_url": t.get("health_url"),
-                "status": t.get("status"),
-                "plan": t.get("plan"),
-                "notification_channel": t.get("notification_channel"),
-                "incident_count": t.get("incident_count"),
-                "created_at": t.get("created_at"),
-                "last_updated": t.get("last_updated"),
-            }
-            for t in tenants
-        ]
+    {
+        "tenant_id": t.get("tenant_id"),
+        "service_name": t.get("service_name"),
+        "health_url": t.get("health_url"),
+        "status": t.get("status"),
+        "plan": t.get("plan"),
+        "notification_channel": t.get("notification_channel"),
+        "shadow_mode": t.get("shadow_mode", True),
+        "shadow_enabled_at": t.get("shadow_enabled_at"),
+        "shadow_disabled_at": t.get("shadow_disabled_at"),
+        "incident_count": t.get("incident_count"),
+        "created_at": t.get("created_at"),
+        "last_updated": t.get("last_updated"),
+    }
+    for t in tenants
+]
         return {
             "total": len(sanitized),
             "tenants": sanitized,
