@@ -9,6 +9,7 @@ from .telegram import TelegramProvider
 from .webhook import WebhookProvider
 from .sent import SentProvider
 from .slack import SlackProvider
+from .meta_whatsapp import MetaDirectProvider
 
 __all__ = [
     "NotificationProvider",
@@ -18,4 +19,5 @@ __all__ = [
     "WebhookProvider",
     "SentProvider",
     "SlackProvider",
+    "MetaDirectProvider",
 ]
