@@ -512,7 +512,7 @@ async def test_incident(tenant_id: str):
     url      = f"{base_url}/action/recover?token={token}"
 
     from notifications import dispatch
-    asyncio.create_task(dispatch(
+    await dispatch(
         tenant=tenant,
         incident_id=incident_id,
         message=(
@@ -523,7 +523,7 @@ async def test_incident(tenant_id: str):
             f"Incident: {incident_id}\n"
             f"Recovery URL: {url}"
         ),
-    ))
+    )
 
     return {
         "incident_id":     incident_id,
