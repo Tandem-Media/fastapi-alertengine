@@ -262,34 +262,13 @@ async def get_shadow_report(
         incidents_observed=incidents,
         summary=summary,
     )
+
+
 @router.get("/{tenant_id}/shadow/governance.pdf")
 async def download_governance_report(
     tenant_id: str,
     x_tenant_secret: Optional[str] = Header(None),
     secret: Optional[str] = None,
-):
-    """Download the Certified Governance Report as a PDF."""
-    import io, os
-    from fastapi.responses import StreamingResponse
-    from governance_report import generate_governance_pdf
-    from audit import get_audit_log_for_tenant
-
-    tenant = _verify_tenant(tenant_id, x_tenant_secret)
-    report  = await get_shadow_report(tenant_id, x_tenant_secret)
-    events  = get_audit_log_for_tenant(tenant_id)
-    logo    = os.path.join(os.path.dirname(__file__), "static", "tofamba_logo.png")
-    pdf     = generate_governance_pdf(tenant, report.dict(), events, logo_path=logo)
-
-    return StreamingResponse(
-        io.BytesIO(pdf),
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="governance-{tenant_id}.pdf"'},
-    )
-
-@router.get("/{tenant_id}/shadow/governance.pdf")
-async def download_governance_report(
-    tenant_id: str,
-    x_tenant_secret: Optional[str] = Header(None),
 ):
     """Download the Certified Governance Report as a PDF."""
     import io as _io
@@ -298,11 +277,33 @@ async def download_governance_report(
     from governance_report import generate_governance_pdf
     from audit import get_audit_log_for_tenant
 
-    tenant  = _verify_tenant(tenant_id, x_tenant_secret or secret)
-    report  = await get_shadow_report(tenant_id, x_tenant_secret)
+    effective_secret = x_tenant_secret or secret
+    tenant  = _verify_tenant(tenant_id, effective_secret)
+
+    # Build shadow report data directly (avoid calling the endpoint function)
+    from audit import get_audit_log_for_tenant
     events  = get_audit_log_for_tenant(tenant_id)
-    logo    = _os.path.join(_os.path.dirname(__file__), "static", "tofamba_logo.png")
-    pdf     = generate_governance_pdf(tenant, report.dict(), events, logo_path=logo)
+
+    shadow_events = [
+        e for e in events
+        if e.get("actor") == "shadow_mode"
+        or (e.get("metadata") or {}).get("shadow_mode")
+    ]
+    incident_ids = {e.get("incident_id") for e in shadow_events if e.get("incident_id")}
+    suppressed_notifs = sum(1 for e in shadow_events if "notification" in e.get("reason","").lower())
+    suppressed_tokens = sum(1 for e in shadow_events if "token" in e.get("reason","").lower())
+    suppressed_escalations = sum(1 for e in shadow_events if "escalat" in e.get("reason","").lower())
+
+    shadow_report = {
+        "total_shadow_events":      len(shadow_events),
+        "incidents_observed":       len(incident_ids),
+        "suppressed_notifications": suppressed_notifs,
+        "suppressed_tokens":        suppressed_tokens,
+        "suppressed_escalations":   suppressed_escalations,
+    }
+
+    logo = _os.path.join(_os.path.dirname(__file__), "static", "tofamba_logo.png")
+    pdf  = generate_governance_pdf(tenant, shadow_report, events, logo_path=logo)
 
     return StreamingResponse(
         _io.BytesIO(pdf),
