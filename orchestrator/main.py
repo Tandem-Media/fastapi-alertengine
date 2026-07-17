@@ -111,10 +111,12 @@ health_app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler
 from onboard import router as onboard_router
 from onboarding_api import router as onboarding_router
 from shadow_mode_api import router as shadow_router
+from pulse_api import router as pulse_router
 
 health_app.include_router(onboard_router)
 health_app.include_router(onboarding_router)
 health_app.include_router(shadow_router)
+health_app.include_router(pulse_router)
 
 import os as _os
 
