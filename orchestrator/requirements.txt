@@ -12,3 +12,4 @@ reportlab>=4.0.0
 slowapi>=0.1.9
 anthropic>=0.40.0,<1.0.0
 python-multipart>=0.0.9,<1.0.0
+Reportlab

@@ -3,3 +3,4 @@ uvicorn[standard]
 redis
 PyJWT>=2.0.0
 slowapi>=0.1.9
+reportlab

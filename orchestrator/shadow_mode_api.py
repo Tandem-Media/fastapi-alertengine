@@ -262,3 +262,25 @@ async def get_shadow_report(
         incidents_observed=incidents,
         summary=summary,
     )
+@router.get("/{tenant_id}/shadow/governance.pdf")
+async def download_governance_report(
+    tenant_id: str,
+    x_tenant_secret: Optional[str] = Header(None),
+):
+    """Download the Certified Governance Report as a PDF."""
+    import io, os
+    from fastapi.responses import StreamingResponse
+    from governance_report import generate_governance_pdf
+    from audit import get_audit_log_for_tenant
+
+    tenant = _verify_tenant(tenant_id, x_tenant_secret)
+    report  = await get_shadow_report(tenant_id, x_tenant_secret)
+    events  = get_audit_log_for_tenant(tenant_id)
+    logo    = os.path.join(os.path.dirname(__file__), "static", "tofamba_logo.png")
+    pdf     = generate_governance_pdf(tenant, report.dict(), events, logo_path=logo)
+
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="governance-{tenant_id}.pdf"'},
+    )
